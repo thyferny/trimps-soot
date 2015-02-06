@@ -5,7 +5,7 @@ package soot.jimple.infoflow.util;
  * 
  * @author Steven Arzt
  */
-public class SystemClassHandler {
+public class VMachineMethodHandler {
 	
 	/**
 	 * Checks whether the given class name belongs to a system package
@@ -13,12 +13,8 @@ public class SystemClassHandler {
 	 * @return True if the given class name belongs to a system package,
 	 * otherwise false
 	 */
-	public static boolean isClassInSystemPackage(String className) {
-		return (className.startsWith("android.")&&!className.startsWith("android.os.Handler"))
-				|| className.startsWith("java.")
-				|| className.startsWith("sun.")
-				|| className.startsWith("com.google.")
-				|| className.startsWith("com.actionbarsherlock.");
+	public static boolean isMethodInJVMStandard(String methodName) {
+		return methodName.startsWith("<init>");
 	}
 
 }

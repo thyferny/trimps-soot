@@ -66,5 +66,21 @@ public class DoubleKeyMap<K1, K2> {
     	}else{
     		return key2s.get(index);
     	}
-    }  
+    }
+    
+    
+    /**
+     * 判断Key2是否存在于列表中，
+     * Added By Lixun
+     * @param k2
+     * @return
+     */
+    public boolean containKey2(K2 k2) {
+    	int index = key2s.indexOf(k2);
+    	if(index==-1){
+    		return false;
+    	}
+    	
+    	return true;
+    }
 }  

@@ -12,6 +12,7 @@ package a.org.trimps.soot.inject;
 import heros.solver.CountingThreadPoolExecutor;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -19,11 +20,11 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import org.gephi.graph.api.DirectedGraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,15 +34,13 @@ import soot.PatchingChain;
 import soot.Scene;
 import soot.SootClass;
 import soot.SootMethod;
-import soot.SootMethodRef;
 import soot.Transform;
 import soot.Unit;
-import soot.ValueBox;
-import soot.jimple.InvokeExpr;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.AbstractInfoflow;
 import soot.jimple.infoflow.BiDirICFGFactory;
 import soot.jimple.infoflow.InfoflowResults;
+import soot.jimple.infoflow.android.data.AndroidMethod;
 import soot.jimple.infoflow.config.IInfoflowConfig;
 import soot.jimple.infoflow.data.AbstractionAtSink;
 import soot.jimple.infoflow.data.pathBuilders.DefaultPathBuilderFactory;
@@ -57,12 +56,12 @@ import soot.jimple.infoflow.solver.IInfoflowCFG;
 import soot.jimple.infoflow.source.ISourceSinkManager;
 import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import soot.jimple.infoflow.util.SystemClassHandler;
-import soot.jimple.internal.InvokeExprBox;
-import soot.jimple.internal.JInvokeStmt;
-import soot.jimple.internal.JVirtualInvokeExpr;
 import soot.jimple.toolkits.callgraph.CallGraph;
 import soot.jimple.toolkits.callgraph.ReachableMethods;
 import soot.options.Options;
+import a.org.trimps.susi.IFeature;
+import a.org.trimps.susi.analysis.MySootAnalyzer;
+import a.org.trimps.susi.features.AbstractSootFeature;
 /**
  * main infoflow class which triggers the analysis and offers method to customize it.
  *
@@ -271,6 +270,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		Set<String> requiredClasses = SootMethodRepresentationParser.v().parseClassNames
 				(entryPointCreator.getRequiredClasses(), false).keySet();
+		
 		initializeSoot(appPath, libPath, requiredClasses);
 
 		// entryPoints are the entryPoints required by Soot to calculate Graph - if there is no main method,
@@ -337,7 +337,23 @@ public class MyInfoflow extends AbstractInfoflow {
         for (Transform tr : preProcessors)
             tr.apply();
         
+		
+        
         CallGraph cg = Scene.v().getCallGraph();
+        
+//        AbstractSootFeature.SOOT_INITIALIZED=true;
+//        Set<AndroidMethod> toFindAsyncMethods = new HashSet<>();
+//        Iterator<MethodOrMethodContext> methodIterator = cg.sourceMethods();
+//		while (methodIterator.hasNext()) {
+//			AndroidMethod e = new AndroidMethod(methodIterator.next().method());
+//			toFindAsyncMethods.add(e);
+//		}
+//		Map<AndroidMethod, IFeature> sensitivityMethod;
+//		try {
+//			sensitivityMethod = new MySootAnalyzer(androidPath, "d:/susi.out", toFindAsyncMethods).run();
+//		} catch (IOException e) {
+//			e.printStackTrace();
+//		}
         new GenerateVisualGraph().init(cg);
 	}
 	

@@ -7,7 +7,7 @@
 	<classpathentry kind="lib" path="lib/AXMLPrinter2.jar"/>
 	<classpathentry kind="lib" path="lib/polyglot.jar"/>
 	<classpathentry kind="lib" path="lib/jasmin.jar"/>
-	<classpathentry kind="lib" path="lib/soot.jar"/>
+	<classpathentry kind="lib" path="lib/soot.jar" sourcepath="/soot"/>
 	<classpathentry kind="lib" path="lib/slf4j-api-1.7.5.jar"/>
 	<classpathentry kind="lib" path="lib/slf4j-simple-1.7.5.jar"/>
 	<classpathentry kind="lib" path="lib/dexlib2-2.0.3-dev.jar"/>
