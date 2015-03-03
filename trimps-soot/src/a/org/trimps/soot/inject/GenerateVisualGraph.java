@@ -42,6 +42,7 @@ import soot.jimple.internal.InvokeExprBox;
 import soot.jimple.internal.JInstanceFieldRef;
 import soot.jimple.internal.JInvokeStmt;
 import soot.jimple.internal.JNewExpr;
+import soot.jimple.internal.JSpecialInvokeExpr;
 import soot.jimple.internal.JStaticInvokeExpr;
 import soot.jimple.internal.JVirtualInvokeExpr;
 import soot.jimple.internal.JimpleLocal;
@@ -169,7 +170,7 @@ public class GenerateVisualGraph {
 			System.out.println(uGraph.getBody()+"\n");
 			IdentityRefBox lastIdentityRefBox = null;//java compile right to left
 			for(Local lc:locals){//for each exp
-				System.out.println(lc);
+//				System.out.println(lc);
 //				if(vb instanceof IdentityRefBox){
 //					lastIdentityRefBox = (IdentityRefBox)vb;
 //				}
@@ -187,7 +188,7 @@ public class GenerateVisualGraph {
 //					System.out.println(vb);
 //				}
 			}
-			System.out.println("-----------------------------------");
+//			System.out.println("-----------------------------------");
 			int size = ref.size();
 			Local[] lcArray = locals.toArray(new Local[size]);
 			for(int i=0;i<size;i++){//default parameter~not a link here...defined in context 
@@ -204,58 +205,87 @@ public class GenerateVisualGraph {
 			for(ValueBox vb:useAndDef){
 				Stmt stmt = findVbInUnits(clone,vb);
 				if(vb instanceof RValueBox){
-					RValueBox rvb = (RValueBox)vb;
-//					System.out.println(rvb.getValue());
-					Value val = rvb.getValue();
-					if(val instanceof JNewExpr){//new
-						JNewExpr jNewExpr = ((JNewExpr)val);
-//						System.out.println("new "+jNewExpr.getType());
-					}
-					else if(val instanceof JVirtualInvokeExpr){//link a method with variable as args' type and it's return type
-						JVirtualInvokeExpr jVirtualInvokeExpr = ((JVirtualInvokeExpr)val);
-						SootMethod baseMethod = jVirtualInvokeExpr.getMethod();
-						Type baseType = val.getType();
-						for(int i=0;i<jVirtualInvokeExpr.getArgCount();i++){
-							Value arg = jVirtualInvokeExpr.getArg(i);
-							System.out.print(baseMethod);
-							System.err.print(" link 1 with the instance of ");
-							System.out.println(arg.getType());
-							soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
-							cg.addEdge(e);
-						}
-					}
-					else if(val instanceof JInstanceFieldRef){//link a instance's variable and the return type
-						Type srcType = ((JInstanceFieldRef)val).getBase().getType();
-						Type tgtType = ((JInstanceFieldRef)val).getType();
-						System.out.print(srcType);
-						System.err.print(" link 2 with the instance of ");
-						System.out.println(tgtType);
-//						soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, vb, unitMap.getKey1(uGraph));//TODO what is the src method..
-//						cg.addEdge(e);
-					}
-					else if(val instanceof JStaticInvokeExpr){//link a static method with variable as args' type and it's return type
-						JStaticInvokeExpr jStaticInvokeExpr = (JStaticInvokeExpr)val;
-						SootMethod baseMethod = jStaticInvokeExpr.getMethod();
-						for(int i=0;i<jStaticInvokeExpr.getArgCount();i++){
-							Value arg = jStaticInvokeExpr.getArg(i);
-							System.out.print(baseMethod);
-							System.err.print(" link 3 with the instance of ");
-							System.out.println(arg.getType());
-							soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
-							cg.addEdge(e);
-						}
-					}
+					handleRValueBox(cg, uGraph, vb, stmt);
+				}else if(vb instanceof InvokeExprBox){
+					handleInvokeExprBox(cg, uGraph, vb, stmt);
 				}
 			}
 			System.out.println("-----------------------------------");
 		}
 	}
 
+	private void handleInvokeExprBox(CallGraph cg, UnitGraph uGraph,
+			ValueBox vb, Stmt stmt) {
+		InvokeExprBox rvb = (InvokeExprBox)vb;
+		Value val = rvb.getValue();
+		if(val instanceof JSpecialInvokeExpr){//link a static method with variable as args' type and it's return type
+			JSpecialInvokeExpr jSpecialInvokeExpr = (JSpecialInvokeExpr)val;
+			SootMethod baseMethod = jSpecialInvokeExpr.getMethod();
+			for(int i=0;i<jSpecialInvokeExpr.getArgCount();i++){
+				Value arg = jSpecialInvokeExpr.getArg(i);
+				System.out.print(baseMethod);
+				System.err.print(" link 4 with the instance of ");
+				System.out.println(arg.getType());
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				cg.addEdge(e);
+			}
+		}else if(val instanceof JVirtualInvokeExpr){//link a method with variable as args' type and it's return type
+			JVirtualInvokeExpr jVirtualInvokeExpr = ((JVirtualInvokeExpr)val);
+			SootMethod baseMethod = jVirtualInvokeExpr.getMethod();
+			Type baseType = val.getType();
+			for(int i=0;i<jVirtualInvokeExpr.getArgCount();i++){
+				Value arg = jVirtualInvokeExpr.getArg(i);
+				System.out.print(baseMethod);
+				System.err.print(" link 1 with the instance of ");
+				System.out.println(arg.getType());
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				cg.addEdge(e);
+			}
+		}
+		else if(val instanceof JInstanceFieldRef){//link a instance's variable and the return type
+			Type srcType = ((JInstanceFieldRef)val).getBase().getType();
+			Type tgtType = ((JInstanceFieldRef)val).getType();
+			System.out.print(srcType);
+			System.err.print(" link 2 with the instance of ");
+			System.out.println(tgtType);
+//						soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, vb, unitMap.getKey1(uGraph));//TODO what is the src method..
+//						cg.addEdge(e);
+		}
+		else if(val instanceof JStaticInvokeExpr){//link a static method with variable as args' type and it's return type
+			JStaticInvokeExpr jStaticInvokeExpr = (JStaticInvokeExpr)val;
+			SootMethod baseMethod = jStaticInvokeExpr.getMethod();
+			for(int i=0;i<jStaticInvokeExpr.getArgCount();i++){
+				Value arg = jStaticInvokeExpr.getArg(i);
+				System.out.print(baseMethod);
+				System.err.print(" link 3 with the instance of ");
+				System.out.println(arg.getType());
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				cg.addEdge(e);
+			}
+		}
+	}
+
+	private void handleRValueBox(CallGraph cg, UnitGraph uGraph, ValueBox vb,
+			Stmt stmt) {
+		RValueBox rvb = (RValueBox)vb;
+//					System.out.println(rvb.getValue());
+		Value val = rvb.getValue();
+		if(val instanceof JNewExpr){//new
+			JNewExpr jNewExpr = ((JNewExpr)val);
+//						System.out.println("new "+jNewExpr.getType());
+		}
+	}
+
 	private Stmt findVbInUnits(Collection<Unit> units, ValueBox vb) {
 		for(Unit u:units){
-			if(u.getJavaSourceStartLineNumber()==vb.getJavaSourceStartColumnNumber()){
-				return (Stmt) u;
+			for(ValueBox ivb:u.getUseBoxes()){
+				if(ivb.getValue().equals(vb.getValue())){
+					return (Stmt) u;
+				};
 			}
+//			u.getJavaSourceStartLineNumber()==vb.getJavaSourceStartLineNumber()){
+//				
+//			}
 		}
 		return null;
 	}
