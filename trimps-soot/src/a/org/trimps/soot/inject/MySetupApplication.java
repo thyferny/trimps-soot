@@ -493,6 +493,7 @@ public class MySetupApplication {
 		else
 			path = Scene.v().getAndroidJarPath(androidJar, apkFileLocation);
 		
+		info.setmGraph(apkFileLocation+"_graph.gexf");
 		info.setTaintWrapper(taintWrapper);
 		info.setSootConfig(new SootConfigForAndroid());
 		if (onResultsAvailable != null)

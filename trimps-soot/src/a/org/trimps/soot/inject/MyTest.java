@@ -128,13 +128,13 @@ public class MyTest {
 	 * @param args[1] = path to android-dir (path/android-platforms/)
 	 */
 	public static void main(String[] args) throws IOException, InterruptedException {
-		args = new String[]{"D:/Test2.apk","E:/sdk/platforms"};
+		args = new String[]{"/media/thyferny/000AB57F000DA4C3/Test4.apk","/home/thyferny/android-sdks/platforms"};
 		if (args.length < 2) {
 			printUsage();	
 			return;
 		}
 		//start with cleanup:
-		File outputDir = new File("JimpleOutput");
+		File outputDir = new File("/home/thyferny/JimpleOutput");
 		if (outputDir.isDirectory()){
 			boolean success = true;
 			for(File f : outputDir.listFiles()){
@@ -154,7 +154,6 @@ public class MyTest {
 		
 		List<String> apkFiles = new ArrayList<String>();
 		File apkFile = new File(args[0]);
-		String extension = apkFile.getName().substring(apkFile.getName().lastIndexOf("."));
 		if (apkFile.isDirectory()) {
 			String[] dirFiles = apkFile.list(new FilenameFilter() {
 			
@@ -166,8 +165,9 @@ public class MyTest {
 			});
 			for (String s : dirFiles)
 				apkFiles.add(s);
-		}
-		else if (extension.equalsIgnoreCase(".txt")) {
+		}else{
+			String extension = apkFile.getName().substring(apkFile.getName().lastIndexOf("."));
+		if (extension.equalsIgnoreCase(".txt")) {
 			BufferedReader rdr = new BufferedReader(new FileReader(apkFile));
 			String line = null;
 			while ((line = rdr.readLine()) != null)
@@ -179,6 +179,7 @@ public class MyTest {
 		else {
 			System.err.println("Invalid input file format: " + extension);
 			return;
+		}
 		}
 
 		for (final String fileName : apkFiles) {

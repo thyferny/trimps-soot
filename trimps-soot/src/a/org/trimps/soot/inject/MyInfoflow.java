@@ -88,6 +88,8 @@ public class MyInfoflow extends AbstractInfoflow {
     private Set<ResultsAvailableHandler> onResultsAvailable = new HashSet<ResultsAvailableHandler>();
     private Set<TaintPropagationHandler> taintPropagationHandlers = new HashSet<TaintPropagationHandler>();
 
+	private String mGraph;
+
 	/**
 	 * Creates a new instance of the InfoFlow class for analyzing plain Java code without any references to APKs or the Android SDK.
 	 */
@@ -354,7 +356,8 @@ public class MyInfoflow extends AbstractInfoflow {
 //		} catch (IOException e) {
 //			e.printStackTrace();
 //		}
-        new GenerateVisualGraph().init(cg);
+        GenerateVisualGraph gvg = new GenerateVisualGraph();
+        gvg.init(cg,getmGraph());
 	}
 	
 	/**
@@ -556,5 +559,13 @@ public class MyInfoflow extends AbstractInfoflow {
 	@Override
 	public void setIPCManager(IIPCManager ipcManager) {
 	    this.ipcManager = ipcManager;
+	}
+
+	public String getmGraph() {
+		return mGraph;
+	}
+
+	public void setmGraph(String mGraph) {
+		this.mGraph = mGraph;
 	}
 }
