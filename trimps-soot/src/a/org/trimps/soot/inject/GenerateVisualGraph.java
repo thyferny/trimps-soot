@@ -49,6 +49,7 @@ import soot.jimple.internal.JimpleLocal;
 import soot.jimple.internal.JimpleLocalBox;
 import soot.jimple.internal.RValueBox;
 import soot.jimple.toolkits.callgraph.CallGraph;
+import soot.jimple.toolkits.callgraph.Targets;
 import soot.tagkit.Host;
 import soot.tagkit.Tag;
 import soot.toolkits.graph.BriefUnitGraph;
@@ -68,12 +69,18 @@ public class GenerateVisualGraph {
 	private DoubleKeyMap<SootMethod, UnitGraph> unitMap = new DoubleKeyMap<SootMethod, UnitGraph>();
 	protected boolean ignoreFlowsInSystemPackages = true;
 	private String mOutputGraph;
+	
+	private static Map<String, String> SIGNATURE_MAP = new HashMap<String, String>();
+	static{
+//		SIGNATURE_MAP.put(key, value);
+//		SIGNATURE_MAP.put(key, value);
+	}
 
 	public void init(CallGraph cg,String mOutputGraph) {
 		this.mOutputGraph = mOutputGraph;
 		// Init a project - and therefore a workspace
 		ProjectController pc = Lookup.getDefault().lookup(ProjectController.class);
-		pc.newProject();
+		pc.newProject(); 
 		Workspace workspace = pc.getCurrentWorkspace();
 
 		// Get a graph model - it exists because we have a workspace
@@ -226,7 +233,7 @@ public class GenerateVisualGraph {
 				System.out.print(baseMethod);
 				System.err.print(" link 4 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
 				cg.addEdge(e);
 			}
 		}else if(val instanceof JVirtualInvokeExpr){//link a method with variable as args' type and it's return type
@@ -238,7 +245,7 @@ public class GenerateVisualGraph {
 				System.out.print(baseMethod);
 				System.err.print(" link 1 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
 				cg.addEdge(e);
 			}
 		}
@@ -259,7 +266,7 @@ public class GenerateVisualGraph {
 				System.out.print(baseMethod);
 				System.err.print(" link 3 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(baseMethod, stmt, unitMap.getKey1(uGraph));//TODO where is the tgt for async?
+				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
 				cg.addEdge(e);
 			}
 		}
