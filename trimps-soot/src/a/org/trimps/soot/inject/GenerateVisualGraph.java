@@ -70,9 +70,9 @@ public class GenerateVisualGraph {
 	protected boolean ignoreFlowsInSystemPackages = true;
 	private String mOutputGraph;
 	
-	private static Map<String, String> SIGNATURE_MAP = new HashMap<String, String>();
+	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
 	static{
-//		SIGNATURE_MAP.put(key, value);
+		SIGNATURE_MAP.put("java.lang.Thread", new HashMap<String,String>(){{put("void start()","void run()");}});
 //		SIGNATURE_MAP.put(key, value);
 	}
 
@@ -174,7 +174,7 @@ public class GenerateVisualGraph {
 			List<Local> paras = body.getParameterLocals();
 			Chain<Local> locals = body.getLocals();
 			List<Value> ref = body.getParameterRefs();
-			System.out.println(uGraph.getBody()+"\n");
+//			System.out.println(uGraph.getBody()+"\n");
 			IdentityRefBox lastIdentityRefBox = null;//java compile right to left
 			for(Local lc:locals){//for each exp
 //				System.out.println(lc);
@@ -228,25 +228,33 @@ public class GenerateVisualGraph {
 		if(val instanceof JSpecialInvokeExpr){//link a static method with variable as args' type and it's return type
 			JSpecialInvokeExpr jSpecialInvokeExpr = (JSpecialInvokeExpr)val;
 			SootMethod baseMethod = jSpecialInvokeExpr.getMethod();
+			SootClass invokeClass = jSpecialInvokeExpr.getMethodRef().declaringClass();
+			SootMethod tgt = findTargetMethod(invokeClass,baseMethod);
 			for(int i=0;i<jSpecialInvokeExpr.getArgCount();i++){
 				Value arg = jSpecialInvokeExpr.getArg(i);
 				System.out.print(baseMethod);
 				System.err.print(" link 4 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
-				cg.addEdge(e);
+				if(tgt!=null){
+					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
+					cg.addEdge(e);
+				}
 			}
 		}else if(val instanceof JVirtualInvokeExpr){//link a method with variable as args' type and it's return type
 			JVirtualInvokeExpr jVirtualInvokeExpr = ((JVirtualInvokeExpr)val);
 			SootMethod baseMethod = jVirtualInvokeExpr.getMethod();
 			Type baseType = val.getType();
+			SootClass invokeClass = jVirtualInvokeExpr.getMethodRef().declaringClass();
+			SootMethod tgt = findTargetMethod(invokeClass,baseMethod);
 			for(int i=0;i<jVirtualInvokeExpr.getArgCount();i++){
 				Value arg = jVirtualInvokeExpr.getArg(i);
 				System.out.print(baseMethod);
 				System.err.print(" link 1 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
-				cg.addEdge(e);
+				if(tgt!=null){
+					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
+					cg.addEdge(e);
+				}
 			}
 		}
 		else if(val instanceof JInstanceFieldRef){//link a instance's variable and the return type
@@ -261,15 +269,57 @@ public class GenerateVisualGraph {
 		else if(val instanceof JStaticInvokeExpr){//link a static method with variable as args' type and it's return type
 			JStaticInvokeExpr jStaticInvokeExpr = (JStaticInvokeExpr)val;
 			SootMethod baseMethod = jStaticInvokeExpr.getMethod();
+			SootClass invokeClass = jStaticInvokeExpr.getMethodRef().declaringClass();
+			SootMethod tgt = findTargetMethod(invokeClass,baseMethod);
 			for(int i=0;i<jStaticInvokeExpr.getArgCount();i++){
 				Value arg = jStaticInvokeExpr.getArg(i);
 				System.out.print(baseMethod);
 				System.err.print(" link 3 with the instance of ");
 				System.out.println(arg.getType());
-				soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
-				cg.addEdge(e);
+				if(tgt!=null){
+					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, tgt);//TODO where is the tgt for async?
+					cg.addEdge(e);
+				}
 			}
 		}
+	}
+
+	private SootMethod findTargetMethod(SootClass invokeClass,SootMethod baseMethod) {
+		SootMethod tgt = null;
+		String subSignature = baseMethod.getSubSignature();
+		List<SootClass> realClassHierarchy = new ArrayList<SootClass>();
+		SootClass superClass = invokeClass;
+		while(superClass!=null){
+			realClassHierarchy.add(superClass);
+			if(superClass.hasSuperclass()){
+				superClass = superClass.getSuperclass();
+			}else{
+				superClass=null;
+			}
+		}
+		
+		for(String key:SIGNATURE_MAP.keySet()){
+			if(canFindSootClass(realClassHierarchy,key)){
+				for(String fromMethod:SIGNATURE_MAP.get(key).keySet()){
+					if(subSignature.equals(fromMethod)){
+						String toMethod = SIGNATURE_MAP.get(key).get(fromMethod);
+						tgt = invokeClass.getMethod(toMethod);
+						System.err.println("find async call "+fromMethod);
+					}
+				}
+			}
+		}
+		return tgt;
+	}
+
+	private boolean canFindSootClass(List<SootClass> realClassHierarchy,
+			String key) {
+		for(SootClass sc:realClassHierarchy){
+			if(sc.getName().equals(key)){
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void handleRValueBox(CallGraph cg, UnitGraph uGraph, ValueBox vb,
