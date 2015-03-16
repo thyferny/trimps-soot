@@ -128,13 +128,13 @@ public class MyTest {
 	 * @param args[1] = path to android-dir (path/android-platforms/)
 	 */
 	public static void main(String[] args) throws IOException, InterruptedException {
-		args = new String[]{"/media/thyferny/000AB57F000DA4C3/Test4.apk","/home/thyferny/android-sdks/platforms"};
+		args = new String[]{"C:\\develop\\android\\apks\\Test4.apk","C:\\develop\\android\\android-sdk_r24.0.2-windows\\android-sdk-windows\\platforms"};
 		if (args.length < 2) {
 			printUsage();	
 			return;
 		}
 		//start with cleanup:
-		File outputDir = new File("/home/thyferny/JimpleOutput");
+		File outputDir = new File("C:\\develop\\android\\JimpleOutput");
 		if (outputDir.isDirectory()){
 			boolean success = true;
 			for(File f : outputDir.listFiles()){

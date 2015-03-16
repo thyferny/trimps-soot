@@ -28,17 +28,14 @@ import soot.SootMethod;
 import soot.SootMethodRef;
 import soot.Type;
 import soot.Unit;
-import soot.UnitBox;
-import soot.UnitPrinter;
 import soot.Value;
 import soot.ValueBox;
-import soot.jimple.ArrayRef;
-import soot.jimple.FieldRef;
 import soot.jimple.InvokeExpr;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.util.SystemClassHandler;
 import soot.jimple.internal.IdentityRefBox;
 import soot.jimple.internal.InvokeExprBox;
+import soot.jimple.internal.JAssignStmt;
 import soot.jimple.internal.JInstanceFieldRef;
 import soot.jimple.internal.JInvokeStmt;
 import soot.jimple.internal.JNewExpr;
@@ -49,13 +46,9 @@ import soot.jimple.internal.JimpleLocal;
 import soot.jimple.internal.JimpleLocalBox;
 import soot.jimple.internal.RValueBox;
 import soot.jimple.toolkits.callgraph.CallGraph;
-import soot.jimple.toolkits.callgraph.Targets;
-import soot.tagkit.Host;
-import soot.tagkit.Tag;
 import soot.toolkits.graph.BriefUnitGraph;
 import soot.toolkits.graph.UnitGraph;
 import soot.util.Chain;
-import soot.util.Switch;
 
 public class GenerateVisualGraph {
 
@@ -73,6 +66,7 @@ public class GenerateVisualGraph {
 	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
 	static{
 		SIGNATURE_MAP.put("java.lang.Thread", new HashMap<String,String>(){{put("void start()","void run()");}});
+		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","java.lang.Object doInBackground(java.lang.Object[])");}});
 //		SIGNATURE_MAP.put(key, value);
 	}
 
@@ -89,6 +83,7 @@ public class GenerateVisualGraph {
 		DoubleKeyMap<Node, MethodOrMethodContext> dkNode = new DoubleKeyMap<>();
 		// Create nodes
 		Iterator<MethodOrMethodContext> methodIterator = cg.sourceMethods();
+		//将CallGraph中的调用者方法全部加入到有向图和dkNode缓存中
 		while (methodIterator.hasNext()) {
 			MethodOrMethodContext src = methodIterator.next();
 			//TODO add async-possible node
@@ -103,6 +98,8 @@ public class GenerateVisualGraph {
 			dkNode.add(node, src);
 		}
 
+		//从dkNode缓存出发，寻找有向图能够达到的节点，将此边的信息添加到有向图中，然后对可达节点进行缓存判断，如果不在缓存中，则放到map中，等遍历完成后统一添加到dkNode缓存中
+		Map<MethodOrMethodContext, Node> map = new HashMap<MethodOrMethodContext, Node>();
 		for (Node n1 : dkNode.key1()) {
 			MethodOrMethodContext src = dkNode.getKey2(n1);
 			Iterator<soot.jimple.toolkits.callgraph.Edge> edgeIterator = cg.edgesOutOf(src);
@@ -122,8 +119,11 @@ public class GenerateVisualGraph {
 					n2 = node;
 					System.out.println("WARNING:Can not find " + tgt.toString() + " while " + sootEdge.toString());
 					
-					//FIXME added by lixun
-					dkNode.add(n2, tgt);
+//					//FIXME added by lixun	（暂时不用）
+//					dkNode.add(n2, tgt);
+					if(!map.containsKey(tgt)) {
+						map.put(tgt, n2);
+					}
 				}
 
 				Edge edge = graphModel.factory().newEdge(n1, n2, 1f, true);
@@ -137,30 +137,84 @@ public class GenerateVisualGraph {
 			}
 		}
 		
-		//FIXME added by lixun
-		for(Node n1 : dkNode.key1()) {
-			MethodOrMethodContext src = dkNode.getKey2(n1);
-			Iterator<soot.jimple.toolkits.callgraph.Edge> edgeIterator = cg.edgesOutOf(src);
-			//TODO analysis async node and add async edge
-			while (edgeIterator.hasNext()) {
-				soot.jimple.toolkits.callgraph.Edge sootEdge = edgeIterator.next();
-				MethodOrMethodContext tgt = sootEdge.getTgt();
-				String className = tgt.method().getDeclaringClass().getName();
-				if (ignoreFlowsInSystemPackages && SystemClassHandler.isClassInSystemPackage(className))
-					continue;
+		while(!map.isEmpty()) {
+			Map<MethodOrMethodContext, Node> map2 = new HashMap<MethodOrMethodContext, Node>();
+			Iterator<MethodOrMethodContext> mit = map.keySet().iterator();
+			while(mit.hasNext()) {
+				MethodOrMethodContext momc = mit.next();
+				Node n1 = map.get(momc);
 				
-				scanMethodForAsyncCall(tgt.method(), dkNode, graphModel);
+				dkNode.add(n1, momc);
+				
+				Iterator<soot.jimple.toolkits.callgraph.Edge> edgeIterator = cg.edgesOutOf(momc);
+				//TODO analysis async node and add async edge
+				while (edgeIterator.hasNext()) {
+					soot.jimple.toolkits.callgraph.Edge sootEdge = edgeIterator.next();
+					MethodOrMethodContext tgt = sootEdge.getTgt();
+					String className = tgt.method().getDeclaringClass().getName();
+					if (ignoreFlowsInSystemPackages && SystemClassHandler.isClassInSystemPackage(className))
+						continue;
+					Node n2 = dkNode.getKey1(tgt);
+					if (n2 == null) {
+						Node node = graphModel.factory().newNode(tgt.method().getName());
+						node.getNodeData().setLabel(tgt.method().getName() + ":" + tgt.method().getDeclaringClass().toString());
+						directedGraph.addNode(node);
+						// dkNode.add(node, tgt);
+						n2 = node;
+						System.out.println("WARNING:Can not find " + tgt.toString() + " while " + sootEdge.toString());
+						
+						if(!map2.containsKey(tgt)) {
+							map2.put(tgt, n2);
+						}
+					}
+
+					Edge edge = graphModel.factory().newEdge(n1, n2, 1f, true);
+					if (sootEdge.srcUnit() == null) {
+						edge.getAttributes().setValue(KEY_CALL_TYPE, CALL_TYPE_ASYNC);
+					} else {
+						edge.getAttributes().setValue(KEY_CALL_TYPE, CALL_TYPE_SYNC);
+						edge.getAttributes().setValue(KEY_SRC_UNIT, sootEdge.srcUnit().toString());
+					}
+					directedGraph.addEdge(edge);
+				}
 			}
+			
+			map = map2;
 		}
+		
+		//FIXME added by lixun(给我们自己的图添加额外的边，与Soot的Callgraph无关)
+//		for(Node n1 : dkNode.key1()) {
+//			MethodOrMethodContext src = dkNode.getKey2(n1);
+//			Iterator<soot.jimple.toolkits.callgraph.Edge> edgeIterator = cg.edgesOutOf(src);
+//			//TODO analysis async node and add async edge	（暂时不用）
+//			while (edgeIterator.hasNext()) {
+//				soot.jimple.toolkits.callgraph.Edge sootEdge = edgeIterator.next();
+//				MethodOrMethodContext tgt = sootEdge.getTgt();
+//				String className = tgt.method().getDeclaringClass().getName();
+//				if (ignoreFlowsInSystemPackages && SystemClassHandler.isClassInSystemPackage(className))
+//					continue;
+//				
+//				scanMethodForAsyncCall(tgt.method(), dkNode, graphModel);	
+//			}
+//		}
 
 		for (Node n1 : dkNode.key1()) {
 			SootMethod src = dkNode.getKey2(n1).method();
+			if(!src.method().hasActiveBody()) {
+				src.method().retrieveActiveBody();
+			}
+			
+			if(!src.method().hasActiveBody()) {
+				System.out.println("Count not retrieve ActiveBody of Method: " + src.method());
+				continue;
+			}
+			
 			BriefUnitGraph unitGraph = new BriefUnitGraph(src.method().getActiveBody());
 //			handleUnitGraph(unitGraph) //TODO
 			unitMap.add(src,unitGraph);
 		}
 
-		handleLocalAsyncCall(cg);
+//		handleLocalAsyncCall(cg);	//TODO 暂时不用
 		// Count nodes and edges
 		System.out.println("Nodes: " + directedGraph.getNodeCount() + " Edges: " + directedGraph.getEdgeCount());
 
@@ -169,8 +223,9 @@ public class GenerateVisualGraph {
 
 	private void handleLocalAsyncCall(CallGraph cg) {
 //		soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(src, srcUnit, tgt);
-		for(UnitGraph uGraph:unitMap.key2()){
+		for(UnitGraph uGraph:unitMap.key2()){	//依次分析每一个方法
 			Body body = uGraph.getBody();
+			/*
 			List<Local> paras = body.getParameterLocals();
 			Chain<Local> locals = body.getLocals();
 			List<Value> ref = body.getParameterRefs();
@@ -202,18 +257,20 @@ public class GenerateVisualGraph {
 //				System.out.print(paras.get(i).getType());
 //				System.err.print(" link 0 with the instance of ");
 //				System.out.println(lcArray[i].getType());
-			}
-			List<ValueBox> useAndDef = body.getUseAndDefBoxes();
+			} */
+			List<ValueBox> useAndDef = body.getUseAndDefBoxes();	//获取方法内所有使用和定义的变量
 			List<Unit> clone = new ArrayList<Unit>();
+			//JimpleLocalBox, IdentityRefBox, JAssignStmt$LinkedRValueBox, JAssignStmt$LinkedVariableBox, ImmediateBox, InvokeExprBox
+			
 			PatchingChain<Unit> units = body.getUnits();
 			for(Unit u:units){
 				clone.add(u);
 			}
 			for(ValueBox vb:useAndDef){
-				Stmt stmt = findVbInUnits(clone,vb);
-				if(vb instanceof RValueBox){
+				Stmt stmt = findVbInUnits(clone,vb);	//找到函数体中使用ValueBox的地方
+				if(vb instanceof RValueBox){	//
 					handleRValueBox(cg, uGraph, vb, stmt);
-				}else if(vb instanceof InvokeExprBox){
+				}else if(vb instanceof InvokeExprBox){	//
 					handleInvokeExprBox(cg, uGraph, vb, stmt);
 				}
 			}
@@ -236,7 +293,7 @@ public class GenerateVisualGraph {
 				System.err.print(" link 4 with the instance of ");
 				System.out.println(arg.getType());
 				if(tgt!=null){
-					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
+					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, tgt);//TODO where is the tgt for async?
 					cg.addEdge(e);
 				}
 			}
@@ -252,7 +309,7 @@ public class GenerateVisualGraph {
 				System.err.print(" link 1 with the instance of ");
 				System.out.println(arg.getType());
 				if(tgt!=null){
-					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, baseMethod);//TODO where is the tgt for async?
+					soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(unitMap.getKey1(uGraph), stmt, tgt);//TODO where is the tgt for async?
 					cg.addEdge(e);
 				}
 			}

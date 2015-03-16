@@ -12,10 +12,10 @@ package a.org.trimps.soot.inject;
 import heros.solver.CountingThreadPoolExecutor;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -25,22 +25,33 @@ import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.ibex.nestedvm.util.InodeCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import soot.Body;
 import soot.MethodOrMethodContext;
 import soot.PackManager;
 import soot.PatchingChain;
+import soot.PointsToAnalysis;
+import soot.RefType;
 import soot.Scene;
 import soot.SootClass;
+import soot.SootFieldRef;
 import soot.SootMethod;
+import soot.SootMethodRef;
 import soot.Transform;
+import soot.Type;
 import soot.Unit;
+import soot.Value;
+import soot.ValueBox;
+import soot.jimple.InvokeExpr;
+import soot.jimple.ParameterRef;
 import soot.jimple.Stmt;
+import soot.jimple.ThisRef;
 import soot.jimple.infoflow.AbstractInfoflow;
 import soot.jimple.infoflow.BiDirICFGFactory;
 import soot.jimple.infoflow.InfoflowResults;
-import soot.jimple.infoflow.android.data.AndroidMethod;
 import soot.jimple.infoflow.config.IInfoflowConfig;
 import soot.jimple.infoflow.data.AbstractionAtSink;
 import soot.jimple.infoflow.data.pathBuilders.DefaultPathBuilderFactory;
@@ -56,12 +67,27 @@ import soot.jimple.infoflow.solver.IInfoflowCFG;
 import soot.jimple.infoflow.source.ISourceSinkManager;
 import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import soot.jimple.infoflow.util.SystemClassHandler;
+import soot.jimple.internal.InvokeExprBox;
+import soot.jimple.internal.JAssignStmt;
+import soot.jimple.internal.JIdentityStmt;
+import soot.jimple.internal.JInstanceFieldRef;
+import soot.jimple.internal.JInvokeStmt;
+import soot.jimple.internal.JNewExpr;
+import soot.jimple.internal.JSpecialInvokeExpr;
+import soot.jimple.internal.JStaticInvokeExpr;
+import soot.jimple.internal.JVirtualInvokeExpr;
+import soot.jimple.internal.JimpleLocal;
+import soot.jimple.internal.RValueBox;
+import soot.jimple.spark.pag.PAG;
+import soot.jimple.spark.solver.OnFlyCallGraph;
 import soot.jimple.toolkits.callgraph.CallGraph;
+import soot.jimple.toolkits.callgraph.Edge;
 import soot.jimple.toolkits.callgraph.ReachableMethods;
 import soot.options.Options;
-import a.org.trimps.susi.IFeature;
-import a.org.trimps.susi.analysis.MySootAnalyzer;
-import a.org.trimps.susi.features.AbstractSootFeature;
+import soot.toolkits.graph.ExceptionalUnitGraph;
+import soot.toolkits.scalar.SimpleLiveLocals;
+import soot.toolkits.scalar.SmartLocalDefs;
+import soot.util.queue.QueueReader;
 /**
  * main infoflow class which triggers the analysis and offers method to customize it.
  *
@@ -89,6 +115,14 @@ public class MyInfoflow extends AbstractInfoflow {
     private Set<TaintPropagationHandler> taintPropagationHandlers = new HashSet<TaintPropagationHandler>();
 
 	private String mGraph;
+	
+	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
+	static{
+		SIGNATURE_MAP.put("java.lang.Thread", new HashMap<String,String>(){{put("void start()","void run()");}});
+		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","java.lang.Object doInBackground(java.lang.Object[])");}});
+		SIGNATURE_MAP.put("android.os.Handler", new HashMap<String,String>(){{put("boolean sendMessage(android.os.Message)","void handleMessage(android.os.Message)");}});
+//		SIGNATURE_MAP.put(key, value);
+	}
 
 	/**
 	 * Creates a new instance of the InfoFlow class for analyzing plain Java code without any references to APKs or the Android SDK.
@@ -332,6 +366,126 @@ public class MyInfoflow extends AbstractInfoflow {
 		if (logger.isDebugEnabled())
 			PackManager.v().writeOutput();
 	}
+	
+	/**
+	 * 找出语句中的右边值
+	 * @param unit
+	 * @return
+	 */
+	private Value findRightValueInUnit(Unit unit) {
+		
+		Value rightValue = null;
+		if(unit instanceof JAssignStmt) {
+			
+			JAssignStmt localassignStmt = (JAssignStmt) unit;
+			ValueBox localrightvb = localassignStmt.rightBox;
+			rightValue = localrightvb.getValue();
+		}
+		else if(unit instanceof JIdentityStmt) {
+			JIdentityStmt localidentityStmt = (JIdentityStmt) unit;
+			ValueBox localrightvb = localidentityStmt.rightBox;
+			rightValue = localrightvb.getValue();
+		}
+		else {	//变量的定义语句似乎只有JAssignStmt和JIdentityStmt，应该不包括其它类型的语句
+			System.out.println("Unbelievable Unit Type: " + unit);
+		}
+		
+		return rightValue;
+	}
+	
+	/**
+	 * 分析类成员变量sfr在方法 method中的赋值情况
+	 * @param cg
+	 * @param method
+	 * @param sfr
+	 */
+	private void analyzeJInstanceFieldRef(CallGraph cg, SootMethod method, SootFieldRef sfr) {
+		MyScene myscene = MyScene.v();
+		Body mbody = method.getActiveBody();
+		
+		List<ValueBox> vbList = mbody.getDefBoxes();
+		
+		for(ValueBox defvb : vbList) {
+			Value v = defvb.getValue();
+			if(!(v instanceof JInstanceFieldRef)) {	//说明这个变量定义不是类成员变量的定义
+				continue;
+			}
+			
+			if(!((JInstanceFieldRef) v).getFieldRef().equals(sfr)) {	//说明这个类成员变量不是这次要分析的成员变量
+				continue;
+			}
+			
+			//对类成员变量赋值
+			Stmt stmt = findVbInUnits(mbody, defvb);
+			if(!(stmt instanceof JAssignStmt)) {	//忽略非赋值语句
+				continue;
+			}
+			
+			JAssignStmt assignStmt = (JAssignStmt) stmt;
+			ValueBox rightvb = assignStmt.rightBox;
+			Value rightValue = rightvb.getValue();
+			
+			List<Unit> ulist = new ArrayList<Unit>();
+			Unit searchStmt = assignStmt;
+			while(!(rightValue instanceof JNewExpr)) {
+				if(rightValue instanceof JimpleLocal) {	//方法内局部变量赋值给类成员变量，这样的变量定义要从方法内找
+					
+					ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
+					SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
+					List<Unit> unitList = smd.getDefsOfAt((JimpleLocal)rightValue, searchStmt);
+					
+					ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
+				}
+				else if(rightValue instanceof ParameterRef) {		//方法参数赋值给类成员变量，这样的变量定义要从函数调用中去找
+					//变量引用是方法参数，获取上次的分析语句调用
+					Iterator<Edge> eit = cg.edgesInto(method);	//找到这个方法的调用点，然后依次分析
+					while(eit.hasNext()) {
+						Edge edge = eit.next();
+						MethodOrMethodContext srcmomc = edge.getSrc();
+						analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, srcmomc, edge.srcUnit(), cg);
+					}
+					
+					rightValue = null;
+				}
+				else if(rightValue instanceof JInstanceFieldRef) {		//其它类成员变量赋值给类成员变量，将这两个类成员变量关联起来
+					//如果从类成员变量中取值，则将两个类成员变量关联
+					SootFieldRef ref = ((JInstanceFieldRef) rightValue).getFieldRef();
+					myscene.addIdentityFieldRef(ref, sfr);
+					
+					rightValue = null;
+				}
+				else {
+					//遇到没有预料到的变量类型
+					System.out.println("enconutered illegal value: " + rightValue);
+					rightValue = null;
+				}
+				
+				if(ulist.size() == 0) {
+					break;
+				}
+				
+				while(ulist.size() > 0)
+				{
+					Unit unit = ulist.remove(0);
+					searchStmt = unit;
+					rightValue = findRightValueInUnit(unit);
+					if(rightValue != null) {
+						break;
+					}
+				}
+				
+				if(rightValue == null) {
+					break;
+				}
+			}
+			
+			if(rightValue instanceof JNewExpr) {	//找到New语句，这是变量的初始化点
+				JNewExpr newexpr = (JNewExpr) rightValue;
+				SootClass tgtsc = newexpr.getBaseType().getSootClass();
+				myscene.addFieldImplSootClass(sfr, tgtsc);
+			}
+		}
+	}
 
 	
 	private void runAnalysis(final ISourceSinkManager sourcesSinks, final Set<String> additionalSeeds) {
@@ -342,6 +496,8 @@ public class MyInfoflow extends AbstractInfoflow {
 		
         
         CallGraph cg = Scene.v().getCallGraph();
+        analyzeSootFieldInstance(cg);
+        analyzeIndirectCall(cg);
         
 //        AbstractSootFeature.SOOT_INITIALIZED=true;
 //        Set<AndroidMethod> toFindAsyncMethods = new HashSet<>();
@@ -356,8 +512,477 @@ public class MyInfoflow extends AbstractInfoflow {
 //		} catch (IOException e) {
 //			e.printStackTrace();
 //		}
+        
+        
+//        GenerateVisualGraph gvg = new GenerateVisualGraph();
+//        gvg.init(cg,getmGraph());
+        
+        PointsToAnalysis pta = Scene.v().getPointsToAnalysis();
+        if(pta instanceof PAG) {
+        	PAG pag = (PAG) pta;
+        	OnFlyCallGraph ofcg = pag.getOnFlyCallGraph();
+        	ReachableMethods rm = ofcg.reachableMethods();
+        	
+        	
+        	//first add Edges to CallGraph(cg), then call ofcg.build();
+        	
+//        	cg.addEdge(e);
+        	ofcg.build();
+        }
+        
         GenerateVisualGraph gvg = new GenerateVisualGraph();
         gvg.init(cg,getmGraph());
+        
+        System.out.println("");
+	}
+	
+	/**
+	 * 分析函数的间接调用，并将间接调用以Edge的方式体现在CallGraph中
+	 * @param cg
+	 */
+	private void analyzeIndirectCall(CallGraph cg) {
+		QueueReader<MethodOrMethodContext> qr = Scene.v().getReachableMethods().listener();
+  		while(qr.hasNext()) {	//依次搜索所有的方法
+  			MethodOrMethodContext momc = qr.next();
+  			SootMethod m = momc.method();
+  			
+//  			if(m.getSubSignature().equals("void onCreate(android.os.Bundle)")) {
+//  				System.out.println("");
+//  			}
+  			
+  			SootClass sc = m.getDeclaringClass();
+  			
+  			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
+  				m.retrieveActiveBody();
+  			}
+  			
+  			if(!m.hasActiveBody()) {
+  				continue;
+  			}
+  			
+  			Body body = m.getActiveBody();
+  			
+  			Iterator<Unit> uit = body.getUnits().iterator();
+  			while(uit.hasNext()) {	//依次遍历所有定义和使用的box
+  				
+  				Unit unit = uit.next();
+  				if(!(unit instanceof JInvokeStmt)) {
+  					//对于非函数调用语句，不必分析
+  					continue;
+  				}
+  				
+  				//要分析出两个内容：1、这个函数是哪个类（对象）调用的；2、这个调用方法是哪个类的方法
+  				JInvokeStmt invoke = (JInvokeStmt) unit;
+  				InvokeExpr expr = invoke.getInvokeExpr();	//得到调用函数表达式
+  				SootMethod baseMethod = expr.getMethod();	//得到函数
+  				
+  				ValueBox vb = getBaseBox(expr);
+  				if(vb != null) {
+					List<SootClass> sclist = getSootClassListForValueBox(vb.getValue(), unit, m, cg);
+					Set<SootClass> scset = new HashSet<SootClass>();
+					
+					for(SootClass invokeClass : sclist) {
+						if(scset.add(invokeClass)) {
+							SootMethod tgt = findTargetMethod(invokeClass, baseMethod);
+							if(tgt!=null)	{
+								soot.jimple.toolkits.callgraph.Edge e=new soot.jimple.toolkits.callgraph.Edge(m, invoke, tgt);
+								cg.addEdge(e);
+							}
+						}
+					}
+  				}
+  				else {
+  					//FIXME vb is null, this is static method call
+  					System.out.println("you must process static method call!");
+  				}
+  				
+  				System.out.println("");
+  			}
+  		}
+	}
+	
+	/**
+	 * 获取此调用语句的调用者Box
+	 * @param expr
+	 * @return
+	 */
+	private ValueBox getBaseBox(InvokeExpr expr) {
+		ValueBox vb = null;
+		if(expr instanceof JVirtualInvokeExpr) {
+			vb = ((JVirtualInvokeExpr) expr).getBaseBox();
+		}
+		else if(expr instanceof JSpecialInvokeExpr) {
+			vb = ((JSpecialInvokeExpr) expr).getBaseBox();
+		}
+		else if(expr instanceof JStaticInvokeExpr) {
+			//for static call, there is no basebox
+		}
+		
+		return vb;
+	}
+	
+	/**
+	 * 获取unit语句中出现的value变量的实际定义类型
+	 * @param value	重点变量
+	 * @param unit	出现变量value的unit语句
+	 * @param method unit语句所在的方法
+	 * @param cg
+	 * @return
+	 */
+	private List<SootClass> getSootClassListForValueBox(Value value, Unit unit, SootMethod method, CallGraph cg) {
+		
+		MyScene myscene = MyScene.v();
+		List<SootClass> sclist = new ArrayList<SootClass>();
+		
+		if(value instanceof JimpleLocal) {
+			JimpleLocal local = (JimpleLocal) value;
+			
+			ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
+			SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
+			List<Unit> uList = smd.getDefsOfAt((JimpleLocal)value, unit);
+			
+			for(Unit u : uList) {
+				Value v = findRightValueInUnit(u);
+				if(v instanceof JimpleLocal) {
+					sclist.addAll(getSootClassListForValueBox(v, u, method, cg));
+				}
+				else if(v instanceof ParameterRef) {
+					Iterator<Edge> eit = cg.edgesInto(method);	//找到这个方法的调用点，然后依次分析
+					while(eit.hasNext()) {
+						Edge edge = eit.next();
+						MethodOrMethodContext srcmomc = edge.getSrc();
+						sclist.addAll(analysisActualParaInMethod((ParameterRef) v, srcmomc, edge.srcUnit(), cg));
+					}
+				}
+				else if(v instanceof JInstanceFieldRef) {	
+					SootFieldRef sfr = ((JInstanceFieldRef) v).getFieldRef();
+					sclist.addAll(myscene.getInstanceImpl(sfr));
+				}
+				else if(v instanceof JNewExpr) {
+					JNewExpr newexpr = (JNewExpr) v;
+					SootClass tgtsc = newexpr.getBaseType().getSootClass();
+					sclist.add(tgtsc);
+				}
+				else if(v instanceof ThisRef) {
+					ThisRef tr = (ThisRef)v;
+					if(tr.getType() instanceof RefType) {
+						RefType reftype = (RefType) (tr.getType());
+						SootClass tgtsc = reftype.getSootClass();
+						sclist.add(tgtsc);
+					}
+				}
+				else {
+					//FIXME 还要考虑函数调用返回值
+					System.out.println("unexpected def unit type!" + v);
+				}
+			}
+		}
+		else {
+			System.out.println("value must be JimpleLocal");
+		}
+		
+		return sclist;
+	}
+	
+	private SootMethod findTargetMethod(SootClass invokeClass,SootMethod baseMethod) {
+		SootMethod tgt = null;
+		String subSignature = baseMethod.getSubSignature();
+		List<SootClass> realClassHierarchy = new ArrayList<SootClass>();
+		SootClass superClass = invokeClass;
+		while(superClass!=null){
+			realClassHierarchy.add(superClass);
+			if(superClass.hasSuperclass()){
+				superClass = superClass.getSuperclass();
+			}else{
+				superClass=null;
+			}
+		}
+		
+		for(String key:SIGNATURE_MAP.keySet()){
+			if(canFindSootClass(realClassHierarchy,key)){
+				for(String fromMethod:SIGNATURE_MAP.get(key).keySet()){
+					if(subSignature.equals(fromMethod)){
+						String toMethod = SIGNATURE_MAP.get(key).get(fromMethod);
+						tgt = invokeClass.getMethod(toMethod);
+						System.err.println("find async call "+fromMethod);
+					}
+				}
+			}
+		}
+		return tgt;
+	}
+	
+	private boolean canFindSootClass(List<SootClass> realClassHierarchy,
+			String key) {
+		for(SootClass sc:realClassHierarchy){
+			if(sc.getName().equals(key)){
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * 分析程序可达方法的类成员变量实例化情况，并将结果保存在MyScene中
+	 * @param cg
+	 */
+	private void analyzeSootFieldInstance(CallGraph cg) {
+		MyScene myscene = MyScene.v();
+	      
+        //added by lixun
+  		QueueReader<MethodOrMethodContext> qr = Scene.v().getReachableMethods().listener();
+  		while(qr.hasNext()) {	//依次搜索所有的方法
+  			MethodOrMethodContext momc = qr.next();
+  			SootMethod m = momc.method();
+  			
+  			SootClass sc = m.getDeclaringClass();
+  			
+  			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
+  				m.retrieveActiveBody();
+  			}
+  			
+  			if(!m.hasActiveBody()) {
+  				continue;
+  			}
+  			
+  			Body body = m.getActiveBody();
+  			
+  			List<ValueBox> useAndDef = body.getUseAndDefBoxes();
+  			for(ValueBox vb : useAndDef) {	//依次遍历所有定义和使用的box
+  				if(!(vb instanceof RValueBox)) {
+  					//如果此box不是右边使用的，则暂时不分析
+  					continue;
+  				}
+
+  				RValueBox rvb = (RValueBox) vb;
+  				Value value = rvb.getValue();
+  				if(value instanceof JInstanceFieldRef) {//目前分析类成员变量
+  					JInstanceFieldRef fieldRef = (JInstanceFieldRef) value;
+  					SootFieldRef sfr = fieldRef.getFieldRef();
+  					
+  					if(!(myscene.addSootClass(sc) || myscene.addFieldSet(sfr))) {
+  						//这个类成员变量已经添加过，不必重复添加
+  						continue;
+  					}
+  						
+  					myscene.addSootFieldRef(sc, sfr);
+  					//搜索这个类的所有方法，找到这个类成员变量定义的地方，
+  					
+  					List<SootMethod> methodList = sc.getMethods();
+  					for(SootMethod method : methodList) {
+  						
+  						if(!method.hasActiveBody()) {
+  							method.retrieveActiveBody();
+  						}
+  						
+  						if(!method.hasActiveBody()) {
+  							continue;
+  						}
+  						
+  						analyzeJInstanceFieldRef(cg, method, sfr); //分析类成员变量sfr在方法 method中的赋值情况
+  					}
+  				}
+  			}
+  		}
+  		
+  		myscene.reorgnizeIdentityFieldRef();
+  		System.out.println("Class member object analysis finished!");
+	}
+	
+	/**
+	 * 获取方法参数对象的实际类型
+	 * @param pararef	方法参数
+	 * @param srcmomc	方法
+	 * @param unit	调用语句
+	 * @param cg	
+	 * @return
+	 */
+	private List<SootClass> analysisActualParaInMethod(ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg) {
+		
+		List<SootClass> sclist = new ArrayList<SootClass>();
+		MyScene myscene = MyScene.v();
+		
+		SootMethod method = srcmomc.method();
+		
+		if(!(unit instanceof JInvokeStmt)) { //必须是函数调用语句
+			return sclist;
+		}
+		
+		JInvokeStmt stmt = (JInvokeStmt) unit;
+		InvokeExprBox exprBox = (InvokeExprBox) stmt.getInvokeExprBox();
+		
+		Value value = exprBox.getValue();
+		assert value instanceof InvokeExpr;
+//		if(!(value instanceof InvokeExpr)) {
+//			return;
+//		}
+		
+		Value rightValue = ((InvokeExpr) value).getArg(pararef.getIndex()); 
+		
+		Unit searchStmt = unit;
+		List<Unit> ulist = new ArrayList<Unit>();
+		
+		while(!(rightValue instanceof JNewExpr)) {
+			if(rightValue instanceof JimpleLocal) {	//方法内局部变量赋值给类成员变量，这样的变量定义要从方法内找
+				
+				ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
+				SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
+				List<Unit> unitList = smd.getDefsOfAt((JimpleLocal)rightValue, searchStmt);
+				
+				ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
+			}
+			else if(rightValue instanceof ParameterRef) {		//方法参数赋值给类成员变量，这样的变量定义要从函数调用中去找
+				//变量引用是方法参数，获取上次的分析语句调用
+				Iterator<Edge> eit = cg.edgesInto(method);	//找到这个方法的调用点，然后依次分析
+				while(eit.hasNext()) {
+					Edge edge = eit.next();
+					MethodOrMethodContext tmpsrcmomc = edge.getSrc();
+					sclist.addAll(analysisActualParaInMethod((ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg));
+				}
+				
+				rightValue = null;
+			}
+			else if(rightValue instanceof JInstanceFieldRef) {		//其它类成员变量赋值给类成员变量，将这两个类成员变量关联起来
+				//如果从类成员变量中取值，则将两个类成员变量关联
+				SootFieldRef ref = ((JInstanceFieldRef) rightValue).getFieldRef();
+				sclist.addAll(myscene.getInstanceImpl(ref));
+				
+				rightValue = null;
+			}
+			else {
+				//遇到没有预料到的变量类型
+				System.out.println("enconutered illegal value: " + rightValue);
+				rightValue = null;
+			}
+			
+			if(ulist.size() == 0) {
+				break;
+			}
+			
+			while(ulist.size() > 0)
+			{
+				Unit tmpunit = ulist.remove(0);
+				searchStmt = tmpunit;
+				rightValue = findRightValueInUnit(tmpunit);
+				if(rightValue != null) {
+					break;
+				}
+			}
+			
+			if(rightValue == null) {
+				break;
+			}
+		}
+		
+		if(rightValue instanceof JNewExpr) {
+			JNewExpr newexpr = (JNewExpr) rightValue;
+			SootClass tgtsc = newexpr.getBaseType().getSootClass();
+			sclist.add(tgtsc);
+		}
+		
+		return sclist;
+	}
+	
+	/**
+	 * 在方法srcmomc中变量的初始化对象，变量是调用语句unit的参数pararef，它传值给类成员变量sfr（因为我们要分析sfr的实际实例化值，所以要分析调用者的参数赋值过程）
+	 * @param sfr
+	 * @param pararef
+	 * @param srcmomc
+	 * @param unit
+	 * @param cg
+	 */
+	private void analysisSootFieldRefInMethod(SootFieldRef sfr, ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg) {
+		
+		MyScene myscene = MyScene.v();
+		SootMethod method = srcmomc.method();
+		
+		if(!(unit instanceof JInvokeStmt)) { //必须是函数调用语句
+			return ;
+		}
+		
+		JInvokeStmt stmt = (JInvokeStmt) unit;
+		InvokeExprBox exprBox = (InvokeExprBox) stmt.getInvokeExprBox();
+		
+		Value value = exprBox.getValue();
+		assert value instanceof InvokeExpr;
+//		if(!(value instanceof InvokeExpr)) {
+//			return;
+//		}
+		
+		Value rightValue = ((InvokeExpr) value).getArg(pararef.getIndex()); 
+		
+		Unit searchStmt = unit;
+		List<Unit> ulist = new ArrayList<Unit>();
+		
+		while(!(rightValue instanceof JNewExpr)) {
+			if(rightValue instanceof JimpleLocal) {	//方法内局部变量赋值给类成员变量，这样的变量定义要从方法内找
+				
+				ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
+				SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
+				List<Unit> unitList = smd.getDefsOfAt((JimpleLocal)rightValue, searchStmt);
+				
+				ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
+			}
+			else if(rightValue instanceof ParameterRef) {		//方法参数赋值给类成员变量，这样的变量定义要从函数调用中去找
+				//变量引用是方法参数，获取上次的分析语句调用
+				Iterator<Edge> eit = cg.edgesInto(method);	//找到这个方法的调用点，然后依次分析
+				while(eit.hasNext()) {
+					Edge edge = eit.next();
+					MethodOrMethodContext tmpsrcmomc = edge.getSrc();
+					analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg);
+				}
+				
+				rightValue = null;
+			}
+			else if(rightValue instanceof JInstanceFieldRef) {		//其它类成员变量赋值给类成员变量，将这两个类成员变量关联起来
+				//如果从类成员变量中取值，则将两个类成员变量关联
+				SootFieldRef ref = ((JInstanceFieldRef) rightValue).getFieldRef();
+				myscene.addIdentityFieldRef(ref, sfr);
+				
+				rightValue = null;
+			}
+			else {
+				//遇到没有预料到的变量类型
+				System.out.println("enconutered illegal value: " + rightValue);
+				rightValue = null;
+			}
+			
+			if(ulist.size() == 0) {
+				break;
+			}
+			
+			while(ulist.size() > 0)
+			{
+				Unit tmpunit = ulist.remove(0);
+				searchStmt = tmpunit;
+				rightValue = findRightValueInUnit(tmpunit);
+				if(rightValue != null) {
+					break;
+				}
+			}
+			
+			if(rightValue == null) {
+				break;
+			}
+		}
+		
+		if(rightValue instanceof JNewExpr) {
+			JNewExpr newexpr = (JNewExpr) rightValue;
+			SootClass tgtsc = newexpr.getBaseType().getSootClass();
+			myscene.addFieldImplSootClass(sfr, tgtsc);
+		}
+	}
+	
+	private Stmt findVbInUnits(Body body, ValueBox vb) {
+		PatchingChain<Unit> units = body.getUnits();
+		for(Unit u:units) {
+			for(ValueBox ivb:u.getUseAndDefBoxes()){
+				if(ivb.equals(vb)) {
+					return (Stmt) u;
+				};
+			}
+		}
+		return null;
 	}
 	
 	/**
