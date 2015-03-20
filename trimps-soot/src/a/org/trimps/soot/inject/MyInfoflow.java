@@ -12,6 +12,8 @@ package a.org.trimps.soot.inject;
 import heros.solver.CountingThreadPoolExecutor;
 
 import java.io.File;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -22,6 +24,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Map.Entry;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -52,8 +55,15 @@ import soot.jimple.ThisRef;
 import soot.jimple.infoflow.AbstractInfoflow;
 import soot.jimple.infoflow.BiDirICFGFactory;
 import soot.jimple.infoflow.InfoflowResults;
+import soot.jimple.infoflow.IInfoflow.CallgraphAlgorithm;
+import soot.jimple.infoflow.InfoflowResults.SinkInfo;
+import soot.jimple.infoflow.InfoflowResults.SourceInfo;
+import soot.jimple.infoflow.aliasing.FlowSensitiveAliasStrategy;
+import soot.jimple.infoflow.aliasing.IAliasingStrategy;
+import soot.jimple.infoflow.aliasing.PtsBasedAliasStrategy;
 import soot.jimple.infoflow.config.IInfoflowConfig;
 import soot.jimple.infoflow.data.AbstractionAtSink;
+import soot.jimple.infoflow.data.AccessPath;
 import soot.jimple.infoflow.data.pathBuilders.DefaultPathBuilderFactory;
 import soot.jimple.infoflow.data.pathBuilders.IAbstractionPathBuilder;
 import soot.jimple.infoflow.data.pathBuilders.IPathBuilderFactory;
@@ -62,8 +72,11 @@ import soot.jimple.infoflow.handlers.ResultsAvailableHandler;
 import soot.jimple.infoflow.handlers.TaintPropagationHandler;
 import soot.jimple.infoflow.ipc.DefaultIPCManager;
 import soot.jimple.infoflow.ipc.IIPCManager;
+import soot.jimple.infoflow.problems.BackwardsInfoflowProblem;
 import soot.jimple.infoflow.problems.InfoflowProblem;
+import soot.jimple.infoflow.solver.BackwardsInfoflowCFG;
 import soot.jimple.infoflow.solver.IInfoflowCFG;
+import soot.jimple.infoflow.solver.fastSolver.InfoflowSolver;
 import soot.jimple.infoflow.source.ISourceSinkManager;
 import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import soot.jimple.infoflow.util.SystemClassHandler;
@@ -494,7 +507,7 @@ public class MyInfoflow extends AbstractInfoflow {
             tr.apply();
         
 		
-        
+        /*  */
         CallGraph cg = Scene.v().getCallGraph();
         analyzeSootFieldInstance(cg);
         analyzeIndirectCall(cg);
@@ -530,10 +543,195 @@ public class MyInfoflow extends AbstractInfoflow {
         	ofcg.build();
         }
         
-        GenerateVisualGraph gvg = new GenerateVisualGraph();
-        gvg.init(cg,getmGraph());
+//        GenerateVisualGraph gvg = new GenerateVisualGraph();
+//        gvg.init(cg,getmGraph());
         
-        System.out.println("");
+        System.out.println("begin old analysis ... ");
+        /* */
+        
+        oldrunAnalysis(sourcesSinks, additionalSeeds);
+	}
+	
+	private void oldrunAnalysis(final ISourceSinkManager sourcesSinks, final Set<String> additionalSeeds) {
+		// Run the preprocessors
+		
+
+        if (callgraphAlgorithm != CallgraphAlgorithm.OnDemand)
+        	logger.info("Callgraph has {} edges", Scene.v().getCallGraph().size());
+        iCfg = icfgFactory.buildBiDirICFG(callgraphAlgorithm);
+        
+        int numThreads = Runtime.getRuntime().availableProcessors();
+		CountingThreadPoolExecutor executor = createExecutor(numThreads);
+		
+		BackwardsInfoflowProblem backProblem;
+		InfoflowSolver backSolver;
+		final IAliasingStrategy aliasingStrategy;
+		switch (aliasingAlgorithm) {
+			case FlowSensitive:
+				backProblem = new BackwardsInfoflowProblem(new BackwardsInfoflowCFG(iCfg), sourcesSinks);
+				// need to set this before creating the zero abstraction
+				backProblem.setFlowSensitiveAliasing(flowSensitiveAliasing);
+				
+				backSolver = new InfoflowSolver(backProblem, executor);
+				backSolver.setJumpPredecessors(!computeResultPaths);
+//				backSolver.setEnableMergePointChecking(true);
+				
+				aliasingStrategy = new FlowSensitiveAliasStrategy(iCfg, backSolver);
+				break;
+			case PtsBased:
+				backProblem = null;
+				backSolver = null;
+				aliasingStrategy = new PtsBasedAliasStrategy(iCfg);
+				break;
+			default:
+				throw new RuntimeException("Unsupported aliasing algorithm");
+		}
+		
+		InfoflowProblem forwardProblem  = new InfoflowProblem(iCfg, sourcesSinks,
+				aliasingStrategy);
+		// need to set this before creating the zero abstraction
+		forwardProblem.setFlowSensitiveAliasing(flowSensitiveAliasing);
+		if (backProblem != null)
+			forwardProblem.setZeroValue(backProblem.createZeroValue());
+		
+		// Set the options
+		InfoflowSolver forwardSolver = new InfoflowSolver(forwardProblem, executor);
+		aliasingStrategy.setForwardSolver(forwardSolver);
+		forwardSolver.setJumpPredecessors(!computeResultPaths);
+//		forwardSolver.setEnableMergePointChecking(true);
+		
+		forwardProblem.setInspectSources(inspectSources);
+		forwardProblem.setInspectSinks(inspectSinks);
+		forwardProblem.setEnableImplicitFlows(enableImplicitFlows);
+		forwardProblem.setEnableStaticFieldTracking(enableStaticFields);
+		forwardProblem.setEnableExceptionTracking(enableExceptions);
+		for (TaintPropagationHandler tp : taintPropagationHandlers)
+			forwardProblem.addTaintPropagationHandler(tp);
+		forwardProblem.setTaintWrapper(taintWrapper);
+		forwardProblem.setStopAfterFirstFlow(stopAfterFirstFlow);
+		forwardProblem.setIgnoreFlowsInSystemPackages(ignoreFlowsInSystemPackages);
+		
+		if (backProblem != null) {
+			backProblem.setForwardSolver((InfoflowSolver) forwardSolver);
+			backProblem.setTaintWrapper(taintWrapper);
+			backProblem.setEnableStaticFieldTracking(enableStaticFields);
+			backProblem.setEnableExceptionTracking(enableExceptions);
+			for (TaintPropagationHandler tp : taintPropagationHandlers)
+				backProblem.addTaintPropagationHandler(tp);
+			backProblem.setTaintWrapper(taintWrapper);
+			backProblem.setActivationUnitsToCallSites(forwardProblem);
+			backProblem.setIgnoreFlowsInSystemPackages(ignoreFlowsInSystemPackages);
+			backProblem.setInspectSources(inspectSources);
+			backProblem.setInspectSinks(inspectSinks);
+		}
+		
+		if (!enableStaticFields)
+			logger.warn("Static field tracking is disabled, results may be incomplete");
+		if (!flowSensitiveAliasing || !aliasingStrategy.isFlowSensitive())
+			logger.warn("Using flow-insensitive alias tracking, results may be imprecise");
+
+		// We have to look through the complete program to find sources
+		// which are then taken as seeds.
+		int sinkCount = 0;
+        logger.info("Looking for sources and sinks...");
+                
+        for (SootMethod sm : getMethodsForSeeds(iCfg)) {
+        	if(sm.getDeclaringClass().getName().startsWith("com.example")) 
+//        		if(sm.getDeclaringClass().getName().equals("com.example.test4.MainActivity")) 
+        	{
+        		sinkCount += scanMethodForSourcesSinks(sourcesSinks, forwardProblem, sm);
+        	}
+        }
+        
+		// We optionally also allow additional seeds to be specified
+		if (additionalSeeds != null)
+			for (String meth : additionalSeeds) {
+				SootMethod m = Scene.v().getMethod(meth);
+				if (!m.hasActiveBody()) {
+					logger.warn("Seed method {} has no active body", m);
+					continue;
+				}
+				forwardProblem.addInitialSeeds(m.getActiveBody().getUnits().getFirst(),
+						Collections.singleton(forwardProblem.zeroValue()));
+			}
+		
+		if (!forwardProblem.hasInitialSeeds() || sinkCount == 0){
+			logger.error("No sources or sinks found, aborting analysis");
+			return;
+		}
+
+		logger.info("Source lookup done, found {} sources and {} sinks.", forwardProblem.getInitialSeeds().size(),
+				sinkCount);
+		
+		forwardSolver.solve();
+		
+		// Not really nice, but sometimes Heros returns before all
+		// executor tasks are actually done. This way, we give it a
+		// chance to terminate gracefully before moving on.
+		int terminateTries = 0;
+		while (terminateTries < 10) {
+			if (executor.getActiveCount() != 0 || !executor.isTerminated()) {
+				terminateTries++;
+				try {
+					Thread.sleep(500);
+				}
+				catch (InterruptedException e) {
+					logger.error("Could not wait for executor termination", e);
+				}
+			}
+			else
+				break;
+		}
+		if (executor.getActiveCount() != 0 || !executor.isTerminated())
+			logger.error("Executor did not terminate gracefully");
+
+		// Print taint wrapper statistics
+		if (taintWrapper != null) {
+			logger.info("Taint wrapper hits: " + taintWrapper.getWrapperHits());
+			logger.info("Taint wrapper misses: " + taintWrapper.getWrapperMisses());
+		}
+		
+		Set<AbstractionAtSink> res = forwardProblem.getResults();
+
+		logger.info("IFDS problem with {} forward and {} backward edges solved, "
+				+ "processing {} results...", forwardSolver.propagationCount,
+				backSolver == null ? 0 : backSolver.propagationCount,
+				res == null ? 0 : res.size());
+		
+		// Force a cleanup. Everything we need is reachable through the
+		// results set, the other abstractions can be killed now.
+		forwardSolver.cleanup();
+		if (backSolver != null) {
+			backSolver.cleanup();
+			backSolver = null;
+			backProblem = null;
+		}
+		forwardSolver = null;
+		forwardProblem = null;
+		AccessPath.clearBaseRegister();
+		Runtime.getRuntime().gc();
+		
+		computeTaintPaths(res);
+		
+		if (results.getResults().isEmpty())
+			logger.warn("No results found.");
+		else for (Entry<SinkInfo, Set<SourceInfo>> entry : results.getResults().entrySet()) {
+			logger.info("The sink {} in method {} was called with values from the following sources:",
+                    entry.getKey(), iCfg.getMethodOf(entry.getKey().getContext()).getSignature() );
+			for (SourceInfo source : entry.getValue()) {
+				logger.info("- {} in method {}",source, iCfg.getMethodOf(source.getContext()).getSignature());
+				if (source.getPath() != null && !source.getPath().isEmpty()) {
+					logger.info("\ton Path: ");
+					for (Unit p : source.getPath()) {
+						logger.info("\t -> " + iCfg.getMethodOf(p));
+						logger.info("\t\t -> " + p);
+					}
+				}
+			}
+		}
+		
+		for (ResultsAvailableHandler handler : onResultsAvailable)
+			handler.onResultsAvailable(iCfg, results);
 	}
 	
 	/**

@@ -40,8 +40,10 @@ import org.slf4j.LoggerFactory;
 
 import soot.SootMethod;
 import soot.Unit;
+import soot.jimple.infoflow.data.Abstraction;
 import soot.jimple.infoflow.util.ConcurrentHashSet;
 import soot.jimple.infoflow.util.MyConcurrentHashMap;
+import soot.jimple.internal.JInvokeStmt;
 import soot.jimple.toolkits.ide.icfg.BiDiInterproceduralCFG;
 
 import com.google.common.cache.CacheBuilder;
@@ -216,7 +218,11 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
     	// in submitting new tasks
     	if (executor.isTerminating())
     		return;
-    	executor.execute(new PathEdgeProcessingTask(edge));
+//    	executor.execute(new PathEdgeProcessingTask(edge));
+    	
+    	PathEdgeProcessingTask task = new PathEdgeProcessingTask(edge);
+    	task.run();
+    	
     	propagationCount++;
     }
 	
@@ -233,6 +239,17 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
 		final N n = edge.getTarget(); // a call node; line 14...
 
         logger.trace("Processing call to {}", n);
+        
+        if(n instanceof JInvokeStmt) {
+        	String signature = ((JInvokeStmt) n).getInvokeExpr().getMethod().getSignature();
+        	if(signature.equals("<android.os.Handler: boolean sendMessage(android.os.Message)>")) {
+        		System.out.println("");
+        	}
+        }
+        
+        if(n.toString().equals("virtualinvoke $r6.<android.os.Handler: boolean sendMessage(android.os.Message)>(null)")) {
+        	System.out.println("Hit!");
+        }
 
 		final D d2 = edge.factAtTarget();
 		assert d2 != null;
@@ -247,6 +264,7 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
 			
 			Collection<N> startPointsOf = icfg.getStartPointsOf(sCalledProcN);
 			//for each result node of the call-flow function
+			
 			for(D d3: res) {
 				//for each callee's start point(s)
 				for(N sP: startPointsOf) {
@@ -598,15 +616,21 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
 
 		public void run() {
 			if(icfg.isCallStmt(edge.getTarget())) {
+				System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				processCall(edge);
+				System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 			} else {
 				//note that some statements, such as "throw" may be
 				//both an exit statement and a "normal" statement
 				if(icfg.isExitStmt(edge.getTarget())) {
+					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 					processExit(edge);
+					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				}
 				if(!icfg.getSuccsOf(edge.getTarget()).isEmpty()) {
+					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 					processNormalFlow(edge);
+					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				}
 			}
 		}
