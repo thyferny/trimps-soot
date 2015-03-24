@@ -380,10 +380,10 @@ public class BackwardsInfoflowProblem extends AbstractInfoflowProblem {
 						assert source.isAbstractionActive() || flowSensitiveAliasing;
 						
 						//if we do not have to look into sources or sinks:
-//						if (!inspectSources && isSource)
-//							return Collections.emptySet();
-//						if (!inspectSinks && isSink)
-//							return Collections.emptySet();
+						if (!inspectSources && isSource)
+							return Collections.emptySet();
+						if (!inspectSinks && isSink)
+							return Collections.emptySet();
 						
 						// taint is propagated in CallToReturnFunction, so we do not
 						// need any taint here if the taint wrapper is exclusive:

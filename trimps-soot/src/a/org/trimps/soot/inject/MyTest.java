@@ -128,13 +128,14 @@ public class MyTest {
 	 * @param args[1] = path to android-dir (path/android-platforms/)
 	 */
 	public static void main(String[] args) throws IOException, InterruptedException {
-		args = new String[]{"/home/thyferny/git/trimps-soot/Test4.apk","/home/thyferny/android-sdks/platforms"};
+		args = new String[]{"/home/thyferny/AndroidSootApk.apk","/home/thyferny/android-sdks/platforms"};
 		if (args.length < 2) {
 			printUsage();	
 			return;
 		}
+		
 		//start with cleanup:
-		File outputDir = new File("/home/thyferny/JimpleOutput");
+		File outputDir = new File(System.getProperty("java.io.tmpdir") + "JimpleOutput");
 		if (outputDir.isDirectory()){
 			boolean success = true;
 			for(File f : outputDir.listFiles()){

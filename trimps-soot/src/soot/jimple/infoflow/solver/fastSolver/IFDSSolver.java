@@ -218,10 +218,10 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
     	// in submitting new tasks
     	if (executor.isTerminating())
     		return;
-//    	executor.execute(new PathEdgeProcessingTask(edge));
+    	executor.execute(new PathEdgeProcessingTask(edge));
     	
-    	PathEdgeProcessingTask task = new PathEdgeProcessingTask(edge);
-    	task.run();
+//    	PathEdgeProcessingTask task = new PathEdgeProcessingTask(edge);
+//    	task.run();
     	
     	propagationCount++;
     }

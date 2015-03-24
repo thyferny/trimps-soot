@@ -12,8 +12,6 @@ package a.org.trimps.soot.inject;
 import heros.solver.CountingThreadPoolExecutor;
 
 import java.io.File;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -133,6 +131,7 @@ public class MyInfoflow extends AbstractInfoflow {
 	static{
 		SIGNATURE_MAP.put("java.lang.Thread", new HashMap<String,String>(){{put("void start()","void run()");}});
 		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","java.lang.Object doInBackground(java.lang.Object[])");}});
+		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","void onPostExecute(java.lang.Object)");}});
 		SIGNATURE_MAP.put("android.os.Handler", new HashMap<String,String>(){{put("boolean sendMessage(android.os.Message)","void handleMessage(android.os.Message)");}});
 //		SIGNATURE_MAP.put(key, value);
 	}
@@ -416,6 +415,12 @@ public class MyInfoflow extends AbstractInfoflow {
 		MyScene myscene = MyScene.v();
 		Body mbody = method.getActiveBody();
 		
+		SootClass sc = method.getDeclaringClass();
+		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
+			System.out.println("no need to analyze system lib Class!");
+			return ;
+		}
+		
 		List<ValueBox> vbList = mbody.getDefBoxes();
 		
 		for(ValueBox defvb : vbList) {
@@ -636,7 +641,7 @@ public class MyInfoflow extends AbstractInfoflow {
         logger.info("Looking for sources and sinks...");
                 
         for (SootMethod sm : getMethodsForSeeds(iCfg)) {
-        	if(sm.getDeclaringClass().getName().startsWith("com.example")) 
+//        	if(sm.getDeclaringClass().getName().startsWith("com.example")) 
 //        		if(sm.getDeclaringClass().getName().equals("com.example.test4.MainActivity")) 
         	{
         		sinkCount += scanMethodForSourcesSinks(sourcesSinks, forwardProblem, sm);
@@ -751,7 +756,13 @@ public class MyInfoflow extends AbstractInfoflow {
   			SootClass sc = m.getDeclaringClass();
   			
   			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
-  				m.retrieveActiveBody();
+  				try {
+  					m.retrieveActiveBody();
+  				}
+  				catch(Throwable t) {
+  					System.out.println(t);
+  					continue;
+  				}
   			}
   			
   			if(!m.hasActiveBody()) {
@@ -819,6 +830,23 @@ public class MyInfoflow extends AbstractInfoflow {
 		return vb;
 	}
 	
+	private List<Unit> getPreUnitList(List<Unit> ulist, Unit unit, SootMethod method) {
+		Iterator<Unit> uit = method.getActiveBody().getUnits().iterator();
+		List<Unit> list = new ArrayList<>();
+		while(uit.hasNext()) {
+			Unit u = uit.next();
+			if(u.equals(unit)) {
+				break;
+			}
+			
+			if(ulist.contains(u)) {
+				list.add(u);
+			}
+		}
+		
+		return list;
+	}
+	
 	/**
 	 * 获取unit语句中出现的value变量的实际定义类型
 	 * @param value	重点变量
@@ -838,6 +866,8 @@ public class MyInfoflow extends AbstractInfoflow {
 			ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
 			SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
 			List<Unit> uList = smd.getDefsOfAt((JimpleLocal)value, unit);
+			
+			uList = getPreUnitList(uList, unit, method);
 			
 			for(Unit u : uList) {
 				Value v = findRightValueInUnit(u);
@@ -936,7 +966,13 @@ public class MyInfoflow extends AbstractInfoflow {
   			SootClass sc = m.getDeclaringClass();
   			
   			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
-  				m.retrieveActiveBody();
+  				try {
+  					m.retrieveActiveBody();
+  				}
+  				catch(Throwable t) {
+  					System.out.println(t);
+  					continue;
+  				}
   			}
   			
   			if(!m.hasActiveBody()) {
@@ -970,7 +1006,13 @@ public class MyInfoflow extends AbstractInfoflow {
   					for(SootMethod method : methodList) {
   						
   						if(!method.hasActiveBody()) {
-  							method.retrieveActiveBody();
+  							try {
+  			  					m.retrieveActiveBody();
+  			  				}
+  			  				catch(Throwable t) {
+  			  					System.out.println(t);
+  			  					continue;
+  			  				}
   						}
   						
   						if(!method.hasActiveBody()) {
@@ -996,6 +1038,12 @@ public class MyInfoflow extends AbstractInfoflow {
 	 * @return
 	 */
 	private List<SootClass> analysisActualParaInMethod(ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg) {
+		
+		SootClass sc = srcmomc.method().getDeclaringClass();
+		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
+			System.out.println("no need to analyze system lib Class!");
+			return new ArrayList<SootClass>();
+		}
 		
 		List<SootClass> sclist = new ArrayList<SootClass>();
 		MyScene myscene = MyScene.v();
@@ -1026,6 +1074,9 @@ public class MyInfoflow extends AbstractInfoflow {
 				ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
 				SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
 				List<Unit> unitList = smd.getDefsOfAt((JimpleLocal)rightValue, searchStmt);
+				
+				//FIXME 缩减搜索范围
+				unitList = getPreUnitList(unitList, searchStmt, method);
 				
 				ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
 			}
@@ -1093,6 +1144,12 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		MyScene myscene = MyScene.v();
 		SootMethod method = srcmomc.method();
+		
+		SootClass sc = srcmomc.method().getDeclaringClass();
+		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
+			System.out.println("no need to analyze system lib Class!");
+			return ;
+		}
 		
 		if(!(unit instanceof JInvokeStmt)) { //必须是函数调用语句
 			return ;

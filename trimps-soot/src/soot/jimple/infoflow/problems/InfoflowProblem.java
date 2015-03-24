@@ -855,10 +855,10 @@ public class InfoflowProblem extends AbstractInfoflowProblem {
 							return Collections.emptySet();
 						
 						//if we do not have to look into sources or sinks:
-//						if (!inspectSources && sourceInfo != null)
-//							return Collections.emptySet();
-//						if (!inspectSinks && isSink)
-//							return Collections.emptySet();
+						if (!inspectSources && sourceInfo != null)
+							return Collections.emptySet();
+						if (!inspectSinks && isSink)
+							return Collections.emptySet();
 						if (source == getZeroValue()) {
 							assert sourceInfo != null;
 							return Collections.singleton(source);
