@@ -21,12 +21,11 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import org.ibex.nestedvm.util.InodeCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,9 +39,7 @@ import soot.Scene;
 import soot.SootClass;
 import soot.SootFieldRef;
 import soot.SootMethod;
-import soot.SootMethodRef;
 import soot.Transform;
-import soot.Type;
 import soot.Unit;
 import soot.Value;
 import soot.ValueBox;
@@ -53,7 +50,6 @@ import soot.jimple.ThisRef;
 import soot.jimple.infoflow.AbstractInfoflow;
 import soot.jimple.infoflow.BiDirICFGFactory;
 import soot.jimple.infoflow.InfoflowResults;
-import soot.jimple.infoflow.IInfoflow.CallgraphAlgorithm;
 import soot.jimple.infoflow.InfoflowResults.SinkInfo;
 import soot.jimple.infoflow.InfoflowResults.SourceInfo;
 import soot.jimple.infoflow.aliasing.FlowSensitiveAliasStrategy;
@@ -106,6 +102,8 @@ import soot.util.queue.QueueReader;
 public class MyInfoflow extends AbstractInfoflow {
 	
     private final Logger logger = LoggerFactory.getLogger(getClass());
+    
+    private static int THRESHOLD = 60;
     
 	private static int accessPathLength = 5;
 	private static boolean useRecursiveAccessPaths = true;
@@ -412,6 +410,9 @@ public class MyInfoflow extends AbstractInfoflow {
 	 * @param sfr
 	 */
 	private void analyzeJInstanceFieldRef(CallGraph cg, SootMethod method, SootFieldRef sfr) {
+		
+		long begin = System.currentTimeMillis();
+		
 		MyScene myscene = MyScene.v();
 		Body mbody = method.getActiveBody();
 		
@@ -460,7 +461,7 @@ public class MyInfoflow extends AbstractInfoflow {
 					while(eit.hasNext()) {
 						Edge edge = eit.next();
 						MethodOrMethodContext srcmomc = edge.getSrc();
-						analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, srcmomc, edge.srcUnit(), cg);
+						analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, srcmomc, edge.srcUnit(), cg, 0);
 					}
 					
 					rightValue = null;
@@ -503,6 +504,8 @@ public class MyInfoflow extends AbstractInfoflow {
 				myscene.addFieldImplSootClass(sfr, tgtsc);
 			}
 		}
+		
+		System.out.println("analyze SootFieldRef：" + sfr + " cost time: " + (System.currentTimeMillis() - begin) / 1000);
 	}
 
 	
@@ -514,7 +517,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
         /*  */
         CallGraph cg = Scene.v().getCallGraph();
-        analyzeSootFieldInstance(cg);
+        analyzeSootFieldInstance(cg); 
         analyzeIndirectCall(cg);
         
 //        AbstractSootFeature.SOOT_INITIALIZED=true;
@@ -755,6 +758,11 @@ public class MyInfoflow extends AbstractInfoflow {
   			
   			SootClass sc = m.getDeclaringClass();
   			
+  			if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
+  				System.out.println("no need to analyze system lib Class!");
+  				continue ;
+  			}
+  			
   			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
   				try {
   					m.retrieveActiveBody();
@@ -787,7 +795,10 @@ public class MyInfoflow extends AbstractInfoflow {
   				
   				ValueBox vb = getBaseBox(expr);
   				if(vb != null) {
+  					
+  					long begin = System.currentTimeMillis();
 					List<SootClass> sclist = getSootClassListForValueBox(vb.getValue(), unit, m, cg);
+					System.out.println("getSootClassListForValueBox cost time: " + (System.currentTimeMillis() - begin) / 1000 + "; " + vb.getValue());
 					Set<SootClass> scset = new HashSet<SootClass>();
 					
 					for(SootClass invokeClass : sclist) {
@@ -847,6 +858,37 @@ public class MyInfoflow extends AbstractInfoflow {
 		return list;
 	}
 	
+	private boolean isasyncClassRelated(SootClass sc) {
+		Iterator<String> sit = SIGNATURE_MAP.keySet().iterator();
+		List<String> list = new ArrayList<String>();
+		while(sit.hasNext()) {
+			list.add(sit.next());
+		}
+		
+		List<SootClass> sclist = new ArrayList<>();
+		sclist.add(sc);
+		
+		while(sclist.size() > 0) {
+			sc = sclist.remove(0);
+			if(sc.hasSuperclass()) {
+				sclist.add(sc.getSuperclass());
+			}
+			
+			Iterator<SootClass> scit = sc.getInterfaces().iterator();
+			while(scit.hasNext()) {
+				SootClass interfaceSc = scit.next();
+				sclist.add(interfaceSc);
+			}
+			
+			String classname = sc.getName();
+			if(list.contains(classname)) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	/**
 	 * 获取unit语句中出现的value变量的实际定义类型
 	 * @param value	重点变量
@@ -863,13 +905,25 @@ public class MyInfoflow extends AbstractInfoflow {
 		if(value instanceof JimpleLocal) {
 			JimpleLocal local = (JimpleLocal) value;
 			
+			SootClass sc = ((RefType)local.getType()).getSootClass();
+			if(!isasyncClassRelated(sc)) {
+				System.out.println("concern indirect call, ignore SootClass: " + sc);
+				return sclist;
+			}
+			
 			ExceptionalUnitGraph graph = new ExceptionalUnitGraph(method.retrieveActiveBody());
 			SmartLocalDefs smd = new SmartLocalDefs(graph, new SimpleLiveLocals(graph));
-			List<Unit> uList = smd.getDefsOfAt((JimpleLocal)value, unit);
+			List<Unit> uList = smd.getDefsOfAt(local, unit);
 			
 			uList = getPreUnitList(uList, unit, method);
+			//FIXME 只处理最近一次出现的局部变量定义语句，因此，把for循环去掉，只处理uList中的最后一个语句
 			
-			for(Unit u : uList) {
+			Unit u = uList.size() == 0 ? null : uList.get(uList.size() - 1);
+			if(u == null) {
+				return sclist;
+			}
+//			for(Unit u : uList) 
+			{
 				Value v = findRightValueInUnit(u);
 				if(v instanceof JimpleLocal) {
 					sclist.addAll(getSootClassListForValueBox(v, u, method, cg));
@@ -879,7 +933,7 @@ public class MyInfoflow extends AbstractInfoflow {
 					while(eit.hasNext()) {
 						Edge edge = eit.next();
 						MethodOrMethodContext srcmomc = edge.getSrc();
-						sclist.addAll(analysisActualParaInMethod((ParameterRef) v, srcmomc, edge.srcUnit(), cg));
+						sclist.addAll(analysisActualParaInMethod((ParameterRef) v, srcmomc, edge.srcUnit(), cg, 0, new ArrayList<MethodOrMethodContext>()));
 					}
 				}
 				else if(v instanceof JInstanceFieldRef) {	
@@ -965,6 +1019,11 @@ public class MyInfoflow extends AbstractInfoflow {
   			
   			SootClass sc = m.getDeclaringClass();
   			
+  			if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
+  				System.out.println("no need to analyze system lib Class!");
+  				continue ;
+  			}
+  			
   			if(m.hasActiveBody()) {//如果尚未有函数体，则先获得函数体
   				try {
   					m.retrieveActiveBody();
@@ -1035,9 +1094,16 @@ public class MyInfoflow extends AbstractInfoflow {
 	 * @param srcmomc	方法
 	 * @param unit	调用语句
 	 * @param cg	
+	 * @param level
+	 * @param mlist 之前出现过的调用函数列表
 	 * @return
 	 */
-	private List<SootClass> analysisActualParaInMethod(ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg) {
+	private List<SootClass> analysisActualParaInMethod(ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg, int level, List<MethodOrMethodContext> mlist) {
+		
+		if(level > THRESHOLD) {
+			System.out.println("can not continue because of deep level: " + level);
+			return new ArrayList<SootClass>();
+		}
 		
 		SootClass sc = srcmomc.method().getDeclaringClass();
 		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
@@ -1078,7 +1144,14 @@ public class MyInfoflow extends AbstractInfoflow {
 				//FIXME 缩减搜索范围
 				unitList = getPreUnitList(unitList, searchStmt, method);
 				
-				ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
+				//FIXME 只要分析处理最后一次局部变量
+				Unit u = unitList.size() == 0 ? null : unitList.get(unitList.size() - 1);
+				if(u != null) {
+//					return sclist;
+					ulist.add(u);	//把这个类局部变量的定义语句放到待分析列表中
+				}
+				
+//				ulist.addAll(unitList);	//把这个类局部变量的定义语句放到待分析列表中
 			}
 			else if(rightValue instanceof ParameterRef) {		//方法参数赋值给类成员变量，这样的变量定义要从函数调用中去找
 				//变量引用是方法参数，获取上次的分析语句调用
@@ -1086,7 +1159,11 @@ public class MyInfoflow extends AbstractInfoflow {
 				while(eit.hasNext()) {
 					Edge edge = eit.next();
 					MethodOrMethodContext tmpsrcmomc = edge.getSrc();
-					sclist.addAll(analysisActualParaInMethod((ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg));
+					if(!mlist.contains(tmpsrcmomc)) {
+						List<MethodOrMethodContext> newList = new ArrayList<MethodOrMethodContext>(mlist);
+						newList.add(srcmomc);
+						sclist.addAll(analysisActualParaInMethod((ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg, level + 1, newList));
+					}
 				}
 				
 				rightValue = null;
@@ -1099,7 +1176,7 @@ public class MyInfoflow extends AbstractInfoflow {
 				rightValue = null;
 			}
 			else {
-				//遇到没有预料到的变量类型
+				//FIXME 遇到没有预料到的变量类型（常量 、null、强制类型转换、方法调用(非静态方法调用、静态方法调用)、数组、），如（-1, null, (String)r1, ）
 				System.out.println("enconutered illegal value: " + rightValue);
 				rightValue = null;
 			}
@@ -1140,7 +1217,12 @@ public class MyInfoflow extends AbstractInfoflow {
 	 * @param unit
 	 * @param cg
 	 */
-	private void analysisSootFieldRefInMethod(SootFieldRef sfr, ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg) {
+	private void analysisSootFieldRefInMethod(SootFieldRef sfr, ParameterRef pararef, MethodOrMethodContext srcmomc, Unit unit, CallGraph cg, int level) {
+		
+		if(level > THRESHOLD) {
+			System.out.println("can not continue because of deep level: " + level);
+			return ;
+		}
 		
 		MyScene myscene = MyScene.v();
 		SootMethod method = srcmomc.method();
@@ -1184,7 +1266,7 @@ public class MyInfoflow extends AbstractInfoflow {
 				while(eit.hasNext()) {
 					Edge edge = eit.next();
 					MethodOrMethodContext tmpsrcmomc = edge.getSrc();
-					analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg);
+					analysisSootFieldRefInMethod(sfr,  (ParameterRef) rightValue, tmpsrcmomc, edge.srcUnit(), cg, level + 1);
 				}
 				
 				rightValue = null;

@@ -128,7 +128,7 @@ public class MyTest {
 	 * @param args[1] = path to android-dir (path/android-platforms/)
 	 */
 	public static void main(String[] args) throws IOException, InterruptedException {
-		args = new String[]{"/home/thyferny/AndroidSootApk.apk","/home/thyferny/android-sdks/platforms"};
+//		args = new String[]{"C:\\develop\\android\\apks\\AndroidSootApk.apk","C:\\develop\\android\\android-sdk_r24.0.2-windows\\android-sdk-windows\\platforms"};
 		if (args.length < 2) {
 			printUsage();	
 			return;
