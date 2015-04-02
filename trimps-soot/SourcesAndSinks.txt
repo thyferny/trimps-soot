@@ -119,6 +119,7 @@
 <android.os.Bundle: android.util.SparseArray getSparseParcelableArray(java.lang.String)> -> _SOURCE_
 <android.os.Bundle: java.lang.String getString(java.lang.String)> -> _SOURCE_
 <android.os.Bundle: java.util.ArrayList getStringArrayList(java.lang.String key)> -> _SOURCE_
+<android.telephony.SmsMessage: SmsMessage android.telephony.SmsMessage.createFromPdu(byte[])> -> _SOURCE_
 
 %bundle sinks
 <android.os.Bundle: void putBinder(java.lang.String,android.os.IBinder)> -> _SINK_

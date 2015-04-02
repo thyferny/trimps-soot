@@ -41,6 +41,7 @@ import soot.SootFieldRef;
 import soot.SootMethod;
 import soot.Transform;
 import soot.Unit;
+import soot.UnitBox;
 import soot.Value;
 import soot.ValueBox;
 import soot.jimple.InvokeExpr;
@@ -76,12 +77,19 @@ import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import soot.jimple.infoflow.util.SystemClassHandler;
 import soot.jimple.internal.InvokeExprBox;
 import soot.jimple.internal.JAssignStmt;
+import soot.jimple.internal.JCmpExpr;
+import soot.jimple.internal.JGotoStmt;
 import soot.jimple.internal.JIdentityStmt;
+import soot.jimple.internal.JIfStmt;
 import soot.jimple.internal.JInstanceFieldRef;
 import soot.jimple.internal.JInvokeStmt;
+import soot.jimple.internal.JLookupSwitchStmt;
+import soot.jimple.internal.JNeExpr;
 import soot.jimple.internal.JNewExpr;
+import soot.jimple.internal.JReturnStmt;
 import soot.jimple.internal.JSpecialInvokeExpr;
 import soot.jimple.internal.JStaticInvokeExpr;
+import soot.jimple.internal.JThrowStmt;
 import soot.jimple.internal.JVirtualInvokeExpr;
 import soot.jimple.internal.JimpleLocal;
 import soot.jimple.internal.RValueBox;
@@ -124,6 +132,11 @@ public class MyInfoflow extends AbstractInfoflow {
     private Set<TaintPropagationHandler> taintPropagationHandlers = new HashSet<TaintPropagationHandler>();
 
 	private String mGraph;
+	private boolean thirdPartyAbortBroadcast = false;
+	private boolean sendMsg = false;
+	private boolean readAddress = false;
+	private boolean readBody = false;
+	private boolean fakePutSms = false;
 	
 	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
 	static{
@@ -131,7 +144,8 @@ public class MyInfoflow extends AbstractInfoflow {
 		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","java.lang.Object doInBackground(java.lang.Object[])");}});
 		SIGNATURE_MAP.put("android.os.AsyncTask", new HashMap<String,String>(){{put("android.os.AsyncTask execute(java.lang.Object[])","void onPostExecute(java.lang.Object)");}});
 		SIGNATURE_MAP.put("android.os.Handler", new HashMap<String,String>(){{put("boolean sendMessage(android.os.Message)","void handleMessage(android.os.Message)");}});
-//		SIGNATURE_MAP.put(key, value);
+//		SIGNATURE_MAP.put("android.os.Handler",void onReceive(android.content.Context,android.content.Intent)
+		//		SIGNATURE_MAP.put(key, value);
 	}
 
 	/**
@@ -418,7 +432,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		SootClass sc = method.getDeclaringClass();
 		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
-			System.out.println("no need to analyze system lib Class!");
+//			System.out.println("no need to analyze system lib Class!");
 			return ;
 		}
 		
@@ -516,9 +530,13 @@ public class MyInfoflow extends AbstractInfoflow {
         
 		
         /*  */
+//        Scene.v().addBasicClass("javax.net.ssl.HttpsURLConnection",0);
         CallGraph cg = Scene.v().getCallGraph();
         analyzeSootFieldInstance(cg); 
         analyzeIndirectCall(cg);
+        if(analyzeExistSmsCheat(cg)){
+        	return;
+        };
         
 //        AbstractSootFeature.SOOT_INITIALIZED=true;
 //        Set<AndroidMethod> toFindAsyncMethods = new HashSet<>();
@@ -535,8 +553,8 @@ public class MyInfoflow extends AbstractInfoflow {
 //		}
         
         
-//        GenerateVisualGraph gvg = new GenerateVisualGraph();
-//        gvg.init(cg,getmGraph());
+        GenerateVisualGraph gvg = new GenerateVisualGraph();
+        gvg.init(cg,getmGraph());
         
         PointsToAnalysis pta = Scene.v().getPointsToAnalysis();
         if(pta instanceof PAG) {
@@ -559,7 +577,175 @@ public class MyInfoflow extends AbstractInfoflow {
         
         oldrunAnalysis(sourcesSinks, additionalSeeds);
 	}
+
+	private boolean analyzeExistSmsCheat(CallGraph cg) {
+		
+		
+		List<MethodOrMethodContext> methods = new ArrayList<MethodOrMethodContext>();
+		Iterator<MethodOrMethodContext> iterator = cg.sourceMethods();
+		
+		while (iterator.hasNext()) {
+			MethodOrMethodContext method = iterator.next();
+//			void android.content.BroadcastReceiver.abortBroadcast()
+//			if(method.method().getSubSignature().indexOf("void abortBroadcast()")>-1){
+//				thirdPartyAbortBroadcast = true;//拦截广播
+//			}
+			methods.add(method);
+		}
+		
+		
+        for (MethodOrMethodContext method:methods) {
+			List<SootClass> realClassHierarchy = new ArrayList<SootClass>();
+			SootClass superClass = method.method().getDeclaringClass();
+			while(superClass!=null){
+				realClassHierarchy.add(superClass);
+				if(superClass.hasSuperclass()){
+					superClass = superClass.getSuperclass();
+				}else{
+					superClass=null;
+				}
+			}
+			
+			int i=0;
+			Value relativeLeftOp=null;//只分析LOCAL的
+			for(UnitBox ub:method.method().getActiveBody().getAllUnitBoxes()){
+//				ContentResolver android.content.ContextWrapper.getContentResolver()
+				Unit unit = ub.getUnit();
+				if(unit instanceof JAssignStmt){
+					JAssignStmt jAssignStmt = (JAssignStmt)unit;
+					Value leftOp = jAssignStmt.getLeftOp();
+					Value rightOp = jAssignStmt.getRightOp();
+					handleAnalyzeResult(relativeLeftOp,leftOp, rightOp);
+				}else if(unit instanceof JReturnStmt){
+					System.out.println("JReturnStmt:\t\t"+unit);
+				}else if(unit instanceof JIdentityStmt){
+					System.out.println("JIdentityStmt:\t\t"+unit);
+				}else if(unit instanceof JThrowStmt){
+					System.out.println("JThrowStmt:\t\t"+unit);
+				}else if(unit instanceof JInvokeStmt){
+					JInvokeStmt jInvokeStmt = (JInvokeStmt)unit;
+					handleAnalyzeResult(null,null,jInvokeStmt.getInvokeExpr());
+				}else if(unit instanceof JIfStmt){
+					JIfStmt jIfStmt = (JIfStmt)unit;
+					Value conditionBoxValue = jIfStmt.getConditionBox().getValue();
+					if(conditionBoxValue instanceof JCmpExpr){
+						JCmpExpr jCmpExpr = (JCmpExpr)conditionBoxValue;
+						Value op1 = jCmpExpr.getOp1();
+						Value op2 = jCmpExpr.getOp2();
+						if(relativeLeftOp!=null&&(relativeLeftOp.toString().equals(op1.toString())||relativeLeftOp.toString().equals(op2.toString()))){
+							System.out.println("Compare address or body");
+						}
+					}
+				}else if(unit instanceof JLookupSwitchStmt){
+					System.out.println("JLookupSwitchStmt:\t\t"+unit);
+				}else if(unit instanceof JGotoStmt){
+					System.out.println("JGotoStmt:\t\t"+unit);
+				}else{
+					System.out.println("ELSE:\t\t"+unit);
+				}
+				i++;
+				
+			}
+			for(ValueBox vb :method.method().getActiveBody().getUseAndDefBoxes()){
+				Value val =vb.getValue();
+				if(val instanceof JStaticInvokeExpr){
+					JStaticInvokeExpr involkExpr = (JStaticInvokeExpr)val;
+					involkExpr.getMethodRef().getSubSignature().equals("android.telephony.SmsMessage createFromPdu(byte[])");//读短信数据库
+				}
+				if(val instanceof JVirtualInvokeExpr){
+					JVirtualInvokeExpr involkExpr = (JVirtualInvokeExpr)val;
+					if(involkExpr.getMethodRef().getSubSignature().toString().equals("void abortBroadcast()")){
+						System.out.println("APK abort broadcast");
+					}//拦截短信事件
+					if(involkExpr.getMethodRef().getSubSignature().toString().equals("void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)")){
+						System.out.println("APK send message");
+					}//发短信
+					if(involkExpr.getMethodRef().getSubSignature().toString().equals("java.lang.String getDisplayOriginatingAddress()")){
+						System.out.println("APK read message address");
+					}//读了源短信地址
+					if(involkExpr.getMethodRef().getSubSignature().toString().equals("java.lang.String getDisplayMessageBody()")){
+						System.out.println("APK read message body");
+					}//读了源短信内容
+					if((involkExpr.getMethodRef().declaringClass().getName().equals("android.content.ContentValues")&&involkExpr.getMethodRef().getSubSignature().toString().equals("void put(java.lang.String,java.lang.String)"))){
+						System.out.println("APK modify local message");
+					}//修改了短信内容
+				}
+			}
+		}
+        if(thirdPartyAbortBroadcast){
+			System.out.println("APK abort broadcast");
+		}
+		if(sendMsg){
+			System.out.println("APK send message");
+		}
+		if(readAddress){
+			System.out.println("APK read message address");
+		}
+		if(readBody){
+			System.out.println("APK read message body");
+		}
+		if(fakePutSms){
+			System.out.println("APK modify local message");
+		}
+//		if(thirdPartyAbortBroadcast&&readAddress&&readBody&&(fakePutSms||redirectMsg)){
+//			System.out.println("Found type 1 by cg");
+//			return true;
+//		}else{
+//			return false;
+//		}
+		return true;
+	}
+
+	private void handleAnalyzeResult(Value relativeLeftOp,Value leftOp, Value rightOp) {
+		int ret = analyzeOp(rightOp);
+		switch(ret){
+		case 1:
+			thirdPartyAbortBroadcast=true;
+			break;
+		case 2:
+			sendMsg=true;
+			break;
+		case 3:
+			readAddress=true;
+			relativeLeftOp = leftOp;
+			break;
+		case 4:
+			readBody=true;
+			relativeLeftOp = leftOp;
+			break;
+		case 5:
+			fakePutSms=true;
+			break;
+		default:
+			break;
+		}
+	}
 	
+	private int analyzeOp(Value Op) {
+		if(Op instanceof JVirtualInvokeExpr){
+			JVirtualInvokeExpr involkExpr = (JVirtualInvokeExpr)Op;
+			if(involkExpr.getMethodRef().getSubSignature().toString().equals("void abortBroadcast()")){
+				return 1;
+			}//拦截短信事件
+			if(involkExpr.getMethodRef().getSubSignature().toString().equals("void sendTextMessage(java.lang.String,java.lang.String,java.lang.String,android.app.PendingIntent,android.app.PendingIntent)")){
+				return 2;
+			}//发短信
+			if(involkExpr.getMethodRef().getSubSignature().toString().equals("java.lang.String getDisplayOriginatingAddress()")){
+				return 3;
+			}//读了源短信地址
+			if(involkExpr.getMethodRef().getSubSignature().toString().equals("java.lang.String getDisplayMessageBody()")){
+				return 4;
+			}//读了源短信内容
+			if((involkExpr.getMethodRef().declaringClass().getName().equals("android.content.ContentValues")&&involkExpr.getMethodRef().getSubSignature().toString().equals("void put(java.lang.String,java.lang.String)"))){
+				return 5;
+			}//修改了短信内容
+			return 0;
+		}else{
+			return 0;
+		}
+
+	}
+
 	private void oldrunAnalysis(final ISourceSinkManager sourcesSinks, final Set<String> additionalSeeds) {
 		// Run the preprocessors
 		
@@ -759,7 +945,7 @@ public class MyInfoflow extends AbstractInfoflow {
   			SootClass sc = m.getDeclaringClass();
   			
   			if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
-  				System.out.println("no need to analyze system lib Class!");
+//  				System.out.println("no need to analyze system lib Class!");
   				continue ;
   			}
   			
@@ -1020,7 +1206,7 @@ public class MyInfoflow extends AbstractInfoflow {
   			SootClass sc = m.getDeclaringClass();
   			
   			if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
-  				System.out.println("no need to analyze system lib Class!");
+//  				System.out.println("no need to analyze system lib Class!");
   				continue ;
   			}
   			
@@ -1107,7 +1293,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		SootClass sc = srcmomc.method().getDeclaringClass();
 		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
-			System.out.println("no need to analyze system lib Class!");
+//			System.out.println("no need to analyze system lib Class!");
 			return new ArrayList<SootClass>();
 		}
 		
@@ -1229,7 +1415,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		SootClass sc = srcmomc.method().getDeclaringClass();
 		if(sc.getName().startsWith("java.") || sc.getName().startsWith("android.")) {
-			System.out.println("no need to analyze system lib Class!");
+//			System.out.println("no need to analyze system lib Class!");
 			return ;
 		}
 		

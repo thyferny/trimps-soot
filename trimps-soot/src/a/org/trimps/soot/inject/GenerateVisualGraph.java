@@ -200,10 +200,9 @@ public class GenerateVisualGraph {
 
 		for (Node n1 : dkNode.key1()) {
 			SootMethod src = dkNode.getKey2(n1).method();
-			if(!src.method().hasActiveBody()) {
+			if(src.method().hasActiveBody()) {
 				src.method().retrieveActiveBody();
 			}
-			
 			if(!src.method().hasActiveBody()) {
 				System.out.println("Count not retrieve ActiveBody of Method: " + src.method());
 				continue;
@@ -217,7 +216,6 @@ public class GenerateVisualGraph {
 //		handleLocalAsyncCall(cg);	//TODO 暂时不用
 		// Count nodes and edges
 		System.out.println("Nodes: " + directedGraph.getNodeCount() + " Edges: " + directedGraph.getEdgeCount());
-
 		saveGraph(workspace,mOutputGraph);
 	}
 
