@@ -30,6 +30,7 @@ import soot.PackManager;
 import soot.Scene;
 import soot.SootClass;
 import soot.SootMethod;
+import soot.Unit;
 import soot.jimple.infoflow.BiDirICFGFactory;
 import soot.jimple.infoflow.IInfoflow.CallgraphAlgorithm;
 import soot.jimple.infoflow.Infoflow;
@@ -522,7 +523,28 @@ public class MySetupApplication {
 
 		info.computeInfoflow(apkFileLocation, path, entryPointCreator, sourceSinkManager);
 
+		snk = info.getSnk();
+		src = info.getSrc();
 		return info.getResults();
+	}
+	private List<Unit> src = new ArrayList<>();
+	private List<Unit> snk = new ArrayList<>();
+	
+
+	public List<Unit> getSrc() {
+		return src;
+	}
+
+	public void setSrc(List<Unit> src) {
+		this.src = src;
+	}
+
+	public List<Unit> getSnk() {
+		return snk;
+	}
+
+	public void setSnk(List<Unit> snk) {
+		this.snk = snk;
 	}
 
 	private AndroidEntryPointCreator createEntryPointCreator() {

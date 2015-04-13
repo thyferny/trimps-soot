@@ -129,7 +129,7 @@ public class MyTest {
 	 */
 	public static void main(String[] args) throws IOException, InterruptedException {
 //		args = new String[]{"/home/thyferny/download/Fake+Callamp(www.greenxf.com).apk","/home/thyferny/android-sdks/platforms"};
-		args = new String[]{"/home/thyferny/AndroidSootApk.apk","/home/thyferny/android-sdks/platforms"};
+		args = new String[]{"F:/home/300TEST/CAFFFDEE7479A8816F4551AC8C3A0178.apk","E:/sdk/platforms"};
 		
 		if (args.length < 2) {
 			printUsage();	

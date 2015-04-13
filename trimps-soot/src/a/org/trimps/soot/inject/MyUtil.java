@@ -184,7 +184,9 @@ public class MyUtil {
         return result.toString();
     }
 	public static void main(String[] args) {
-		System.out.println(toHexString(new boolean[]{true,false,true,true,true,false,false,true}));
+//		System.out.println(toHexString(new boolean[]{true,false,true,true,true,false,false,true}));
+		String a="ff16";
+		System.out.println(Integer.parseInt(""+a.charAt(2),16));
 	}
 	public static String toHexString(boolean[] array) {
 		String ret="";
@@ -294,6 +296,14 @@ public class MyUtil {
 		return "";
 	}
 
+	public static int myIndexInList(List<String> ll,String val){
+		for(int i=0;i<ll.size();i++){
+			if(val.indexOf(ll.get(i))!=-1){
+				return i;
+			}
+		}
+		return -1;
+	}
 	private static void log(String format, Object[] arguments) {
 		System.out.printf(format, arguments);
 		System.out.println();
@@ -301,5 +311,29 @@ public class MyUtil {
 
 	public static float complexToFloat(int complex) {
 		return (complex & 0xFFFFFF00) * RADIX_MULTS[(complex >> 4 & 0x3)];
+	}
+	
+	public double androidPermissionDist(String permission1,String permission2){
+		double dist=Double.MAX_VALUE;
+		if(permission1.length()==permission2.length()){
+			dist = 0;
+			int length = permission1.length();
+			for(int i=0;i<length;i++){
+				char x1 = permission1.charAt(i);
+				char x2 = permission2.charAt(i);
+				int x1v = Integer.parseInt(""+x1, 16);
+				int x2v = Integer.parseInt(""+x2, 16);
+				dist+=((x1v-x2v)*(x1v-x2v));
+			}
+		}
+		return Math.sqrt(dist);
+	}
+
+	public static double calEditDist(double[] vector, double[] center, int length) {
+		double dist = 0;
+		for(int i=0;i<length;i++){
+			dist+=((vector[i]-center[i])*(vector[i]-center[i]));
+		}
+		return Math.sqrt(dist);
 	}
 }

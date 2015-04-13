@@ -18,22 +18,20 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 import org.xmlpull.v1.XmlPullParserException;
 
-import soot.jimple.infoflow.IInfoflow.CallgraphAlgorithm;
+import soot.Unit;
 import soot.jimple.infoflow.android.AndroidSourceSinkManager.LayoutMatchingMode;
 import soot.jimple.infoflow.android.axml.AXmlNode;
-import soot.jimple.infoflow.android.data.AndroidMethod;
 import soot.jimple.infoflow.taintWrappers.EasyTaintWrapper;
 import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 
 import com.mysql.jdbc.Driver;
 
 public class MyAnalyzer {
-	static boolean generate = false;
+	static boolean generate = true;
 
 	private static boolean stopAfterFirstFlow = false;
 	private static boolean implicitFlows = false;
@@ -46,29 +44,28 @@ public class MyAnalyzer {
 	private static boolean computeResultPaths = true;
 	private static boolean aggressiveTaintWrapper = false;
 
-	private static CallgraphAlgorithm callgraphAlgorithm = CallgraphAlgorithm.AutomaticSelection;
-	private static String SDKs = "/home/thyferny/android-sdks/platforms";
+	private static String SDKs = "E:/sdk/platforms";
 
 	static LinkedList<String> permissions = new LinkedList<String>();
 	static List<String> activities = new ArrayList<String>();
 	static String packageName = "";
 	static String applicationName = "";
 	static boolean[] permissionIndex;
-	
+
 	static LinkedList<String> srcPoints = new LinkedList<String>();
 	static LinkedList<String> snkPoints = new LinkedList<String>();
 	static int[] srcCharacter;
 	static int[] snkCharacter;
-	
+
 	static {
 		try {
-			File f = new File("/home/thyferny/AndroidPermissions");
+			File f = new File("AndroidPermissions");
 			InputStream is = new FileInputStream(f);
 			InputStreamReader isr = new InputStreamReader(is);
 			BufferedReader br = new BufferedReader(isr);
 			String permission = "";
 			while ((permission = br.readLine()) != null) {
-				if (permission.startsWith("android.permission")||permission.startsWith("com.android")||permission.startsWith("com.google")) {
+				if (permission.startsWith("android.permission") || permission.startsWith("com.android") || permission.startsWith("com.google")) {
 					permissions.add(permission);
 				}
 			}
@@ -85,20 +82,19 @@ public class MyAnalyzer {
 			String ss = "";
 			while ((ss = br.readLine()) != null) {
 				if (ss.startsWith("<")) {
-					if(ss.endsWith("_SOURCE_")){
-						srcPoints.add(ss.split("> ")[0]+">");
-					}else if(ss.endsWith("_SINK_")){
-						snkPoints.add(ss.split("> ")[0]+">");
+					if (ss.endsWith("_SOURCE_")) {
+						srcPoints.add(ss.split("> ")[0] + ">");
+					} else if (ss.endsWith("_SINK_")) {
+						snkPoints.add(ss.split("> ")[0] + ">");
 					}
 				}
 			}
 			br.close();
 			isr.close();
 			is.close();
+
 			srcCharacter = new int[srcPoints.size()];
 			snkCharacter = new int[snkPoints.size()];
-			Arrays.fill(srcCharacter, 0);
-			Arrays.fill(snkCharacter, 0);
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
@@ -107,30 +103,87 @@ public class MyAnalyzer {
 	}
 
 	public static void main(String[] args) throws IOException, SQLException {
-//		static String apkFilePath = "/home/thyferny/FakeCall_3.2.3_323.apk";
-		if(generate){
-			for(File f:new File("/home/thyferny/300TEST").listFiles()){
+		// static String apkFilePath = "/home/thyferny/FakeCall_3.2.3_323.apk";
+		if (generate) {
+			updateDataBase();
+			for (File f : new File("F:/home/300TEST").listFiles()) {
 				singalApkRunner(f.getAbsolutePath());
 			}
-		}else{
-			for(File f:new File("/home/thyferny/1TEST").listFiles()){
+		} else {
+			for (File f : new File("F:/home/1TEST").listFiles()) {
 				singalApkGeneralMatcher(f.getAbsolutePath());
 			}
 		}
 	}
-	
+
+	public static void kMeansDriver() throws SQLException {
+		Statement st = mysqlConnection().createStatement();
+		ResultSet rs = st.executeQuery("select * from apksrc");
+		ArrayList<double[]> all = new ArrayList<>();
+		while (rs.next()) {
+			String val = rs.getString("val");
+			String[] tmp = val.replaceAll("\\[", "").replaceAll("\\]", "").split(",");
+			double[] vec = new double[tmp.length - 1];
+			for (int i = 0; i < vec.length; i++) {
+				vec[i] = Double.parseDouble(tmp[i]);
+			}
+			all.add(vec);
+		}
+		int len = all.get(0).length;
+		// 划分为10个簇，质心移动小于1E-8时终止迭代，重复运行20次
+		double kSA = Double.MAX_VALUE;
+		int fail = 0;
+		double estimateK = Math.sqrt(all.size()) * 2;
+		int k;
+		for (k = 1; k < estimateK; k++) {
+			System.out.println("k=" + k);
+			KMeansEngine km = new KMeansEngine(k, 1E-10, 8, len);
+			int index = 0;
+			double minsa = Double.MAX_VALUE;
+			for (int i = 0; i < km.repeat; i++) {
+				double ss = km.run(i, all, len);
+				if (ss < minsa) {
+					minsa = ss;
+					index = i;
+				}
+			}
+			System.out.println("最好的结果是第" + index + "次。" + "SS:" + minsa);
+			System.out.println("-------------------------------------------------------");
+			if (kSA < minsa) {//
+				fail++;
+			} else {
+				kSA = minsa;
+			}
+			if (fail > 5) {
+				break;
+			}
+		}
+		System.out.println("该批数据最好聚未" + k + "类");
+	}
+
+	static void updateDataBase() throws SQLException {
+		Statement st = mysqlConnection().createStatement();
+		st.execute("delete from signature");
+		st.execute("drop table if exists apksrc");
+		st.execute("create table apksrc(md5 text,val text)");
+		st.execute("drop table if exists apksnk");
+		st.execute("create table apksnk(md5 text,val text)");
+		st.execute("drop table if exists apkname");
+		st.execute("create table apkname(uuid text,name text)");
+	}
+
 	private static void singalApkGeneralMatcher(String apkFilePath) throws SQLException {
 		String signInfo = MyUtil.getApkSignInfo(apkFilePath);
 		String character1_1 = "";
-		if("".equals(signInfo)){
+		if ("".equals(signInfo)) {
 			character1_1 = "";
-		}else{
+		} else {
 			character1_1 = MyUtil.md5(signInfo);
 		}
-		
+
 		String character1_2 = MyUtil.md5(new File(apkFilePath));
-//		System.out.println(character1_1);
-//		System.out.println(character1_2);
+		// System.out.println(character1_1);
+		// System.out.println(character1_2);
 		// 特征1提取完成
 		String character2_1 = "";
 		String character2_2 = "";
@@ -143,56 +196,56 @@ public class MyAnalyzer {
 			character2_1 = MyUtil.md5(MyUtil.listToString(activities));
 			character2_2 = MyUtil.toHexString(permissionIndex);
 		} catch (Exception e) {
-//			e.printStackTrace();
+			// e.printStackTrace();
 		}
-		
-//		System.out.println(character2_1);
-//		System.out.println(character2_2);
+
+		// System.out.println(character2_1);
+		// System.out.println(character2_2);
 		// 特征2提取完成
 		String character3_1;
 		String character3_2;
-		try{
+		try {
 			runAnalysis(apkFilePath, SDKs);
 			character3_1 = MyUtil.md5(Arrays.toString(srcCharacter));
 			character3_2 = MyUtil.md5(Arrays.toString(snkCharacter));
-		}catch(Throwable th){
-//			th.printStackTrace();
+		} catch (Throwable th) {
+			// th.printStackTrace();
 			character3_1 = "";
 			character3_2 = "";
 		}
-		
+
 		// 特征3提取完成
-		Connection conn  = mysqlConnection();
-		if(conn!=null){
+		Connection conn = mysqlConnection();
+		if (conn != null) {
 			Statement st = conn.createStatement();
-			ResultSet rs = st.executeQuery("select * from signature where sig11=\'"+character1_1+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" has cert same with "+rs.getString("uuid"));
+			ResultSet rs = st.executeQuery("select * from signature where sig11=\'" + character1_1 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " has cert same with " + rs.getString("uuid"));
 				break;
 			}
-			rs = st.executeQuery("select * from signature where sig12=\'"+character1_2+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" same with "+rs.getString("uuid"));
+			rs = st.executeQuery("select * from signature where sig12=\'" + character1_2 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " same with " + rs.getString("uuid"));
 				break;
 			}
-			rs = st.executeQuery("select * from signature where sig21=\'"+character2_1+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" same activity structure with "+rs.getString("uuid"));
+			rs = st.executeQuery("select * from signature where sig21=\'" + character2_1 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " same activity structure with " + rs.getString("uuid"));
 				break;
 			}
-			rs = st.executeQuery("select * from signature where sig22=\'"+character2_2+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" same permission with "+rs.getString("uuid"));
+			rs = st.executeQuery("select * from signature where sig22=\'" + character2_2 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
 				break;
 			}
-			rs = st.executeQuery("select * from signature where sig31=\'"+character3_1+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" same permission with "+rs.getString("uuid"));
+			rs = st.executeQuery("select * from signature where sig31=\'" + character3_1 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
 				break;
 			}
-			rs = st.executeQuery("select * from signature where sig32=\'"+character3_2+"\'");
-			while(rs.next()){
-				System.out.println("find " +apkFilePath +" same permission with "+rs.getString("uuid"));
+			rs = st.executeQuery("select * from signature where sig32=\'" + character3_2 + "\'");
+			while (rs.next()) {
+				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
 				break;
 			}
 			st.close();
@@ -203,15 +256,15 @@ public class MyAnalyzer {
 	private static void singalApkRunner(String apkFilePath) throws SQLException {
 		String signInfo = MyUtil.getApkSignInfo(apkFilePath);
 		String character1_1 = "";
-		if("".equals(signInfo)){
+		if ("".equals(signInfo)) {
 			character1_1 = "";
-		}else{
+		} else {
 			character1_1 = MyUtil.md5(signInfo);
 		}
-		
+
 		String character1_2 = MyUtil.md5(new File(apkFilePath));
-//		System.out.println(character1_1);
-//		System.out.println(character1_2);
+		// System.out.println(character1_1);
+		// System.out.println(character1_2);
 		// 特征1提取完成
 		String character2_1 = "";
 		String character2_2 = "";
@@ -224,40 +277,61 @@ public class MyAnalyzer {
 			character2_1 = MyUtil.md5(MyUtil.listToString(activities));
 			character2_2 = MyUtil.toHexString(permissionIndex);
 		} catch (Exception e) {
-//			e.printStackTrace();
+			// e.printStackTrace();
 		}
-//		System.out.println(character2_1);
-//		System.out.println(character2_2);
+		// System.out.println(character2_1);
+		// System.out.println(character2_2);
 		// 特征2提取完成
 		String character3_1;
 		String character3_2;
-		try{
+		Arrays.fill(srcCharacter, 0);
+		Arrays.fill(snkCharacter, 0);
+		try {
 			runAnalysis(apkFilePath, SDKs);
 			character3_1 = MyUtil.md5(Arrays.toString(srcCharacter));
 			character3_2 = MyUtil.md5(Arrays.toString(snkCharacter));
-		}catch(Throwable th){
-//			th.printStackTrace();
+		} catch (Throwable th) {
+			// th.printStackTrace();
 			character3_1 = "";
 			character3_2 = "";
 		}
-		
+
 		// 特征3提取完成
-		Connection conn  = mysqlConnection();
-		if(conn!=null){
-			PreparedStatement ps = conn.prepareStatement("insert into signature values(?,?,?,?,?,?,?,?)");
-			ps.setString(1, UUID.randomUUID().toString());
-			ps.setString(2, character1_1);
-			ps.setString(3, character1_2);
-			ps.setString(4, character2_1);
-			ps.setString(5, character2_2);
-			ps.setString(6, character3_1);
-			ps.setString(7, character3_2);
-			ps.setBoolean(8, true);
-			ps.execute();
+		String uuid = UUID.randomUUID().toString();
+		Connection conn = mysqlConnection();
+		if (conn != null) {
+			PreparedStatement ps1 = conn.prepareStatement("insert into signature values(?,?,?,?,?,?,?,?)");
+			ps1.setString(1, uuid);
+			ps1.setString(2, character1_1);
+			ps1.setString(3, character1_2);
+			ps1.setString(4, character2_1);
+			ps1.setString(5, character2_2);
+			ps1.setString(6, character3_1);
+			ps1.setString(7, character3_2);
+			ps1.setBoolean(8, true);
+			ps1.execute();
+
+			PreparedStatement ps2 = conn.prepareStatement("insert into apkname values(?,?)");
+			ps2.setString(1, uuid);
+			ps2.setString(2, apkFilePath);
+			ps2.execute();
+
+			if (!"".equals(character3_1) && !"".equals(character3_1)) {
+				PreparedStatement ps3 = conn.prepareStatement("insert into apksrc values(?,?)");
+				ps3.setString(1, MyUtil.md5(Arrays.toString(srcCharacter)));
+				ps3.setString(2, Arrays.toString(srcCharacter));
+				ps3.execute();
+
+				PreparedStatement ps4 = conn.prepareStatement("insert into apksnk values(?,?)");
+				ps4.setString(1, MyUtil.md5(Arrays.toString(snkCharacter)));
+				ps4.setString(2, Arrays.toString(snkCharacter));
+				ps4.execute();
+			}
+
 		}
 	}
 
-	public static Connection mysqlConnection(){
+	public static Connection mysqlConnection() {
 		StringBuffer url = new StringBuffer();
 		String host = "127.0.0.1";
 		String database = "apksignature";
@@ -274,6 +348,7 @@ public class MyAnalyzer {
 		}
 		return conn;
 	}
+
 	private static void analyseNode(AXmlNode node) {
 		analyzeSingleNode(node);
 		if (node.getChildren().size() > 0) {
@@ -293,8 +368,9 @@ public class MyAnalyzer {
 				if (index != -1) {
 					permissionIndex[index] = true;
 				} else {
-//					"unkown permission type:" +
-//					System.err.println( node.getAttribute("name").getValue().toString());
+					// "unkown permission type:" +
+					// System.err.println(
+					// node.getAttribute("name").getValue().toString());
 				}
 			} else if (node.getTag().equals("application")) {
 				applicationName = node.getAttribute("name").getValue().toString();
@@ -307,8 +383,6 @@ public class MyAnalyzer {
 
 	private static void runAnalysis(final String fileName, final String androidJar) {
 		try {
-			final long beforeRun = System.nanoTime();
-
 			final MySetupApplication app;
 			app = new MySetupApplication(androidJar, fileName);
 			app.setStopAfterFirstFlow(stopAfterFirstFlow);
@@ -330,30 +404,27 @@ public class MyAnalyzer {
 				easyTaintWrapper = new EasyTaintWrapper("EasyTaintWrapperSource.txt");
 			easyTaintWrapper.setAggressiveMode(aggressiveTaintWrapper);
 			taintWrapper = easyTaintWrapper;
-
 			app.setTaintWrapper(taintWrapper);
 			app.calculateSourcesSinksEntrypoints("SourcesAndSinks.txt");
-			Set<AndroidMethod> source = app.getSources();
-			Set<AndroidMethod> sink = app.getSinks();
-			for(AndroidMethod src :source){
-				String method = "<"+src.getClassName()+": "+src.getSubSignature()+">";
-				int index = srcPoints.indexOf(method);
-				if(index==-1){
-					System.err.println("ERROR:"+method);
-				}else{
-					srcCharacter[index]++;
+
+			app.runInfoflow(null);
+			for (Unit sink : app.getSnk()) {
+				int snkIndex = MyUtil.myIndexInList(snkPoints, sink.toString());
+				if (snkIndex == -1) {
+					System.err.println("ERROR Unkown Sink:" + sink);
+				} else {
+					snkCharacter[snkIndex]++;
 				}
 			}
-			for(AndroidMethod snk :sink){
-				String method = "<"+snk.getClassName()+": "+snk.getSubSignature()+">";
-				int index = snkPoints.indexOf(method);
-				if(index==-1){
-					System.err.println("ERROR:"+method);
-				}else{
-					snkCharacter[index]++;
+			for (Unit source : app.getSrc()) {
+				int srcIndex = MyUtil.myIndexInList(srcPoints, source.toString());
+				if (srcIndex == -1) {
+					System.err.println("ERROR Unkown Source:" + source.toString());
+				} else {
+					srcCharacter[srcIndex]++;
 				}
 			}
-			System.out.println("Analysis has run for " + (System.nanoTime() - beforeRun) / 1E9 + " seconds");
+
 		} catch (IOException ex) {
 			System.err.println("Could not read file: " + ex.getMessage());
 			ex.printStackTrace();
@@ -364,4 +435,5 @@ public class MyAnalyzer {
 			throw new RuntimeException(ex);
 		}
 	}
+
 }

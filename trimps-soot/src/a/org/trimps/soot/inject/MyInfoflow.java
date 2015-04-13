@@ -138,6 +138,11 @@ public class MyInfoflow extends AbstractInfoflow {
 	private boolean readBody = false;
 	private boolean fakePutSms = false;
 	
+	private List<Unit> src = new ArrayList<>();
+	private List<Unit> snk = new ArrayList<>();
+
+	private static boolean XX = true;
+	
 	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
 	static{
 		SIGNATURE_MAP.put("java.lang.Thread", new HashMap<String,String>(){{put("void start()","void run()");}});
@@ -532,11 +537,14 @@ public class MyInfoflow extends AbstractInfoflow {
         /*  */
 //        Scene.v().addBasicClass("javax.net.ssl.HttpsURLConnection",0);
         CallGraph cg = Scene.v().getCallGraph();
-        analyzeSootFieldInstance(cg); 
-        analyzeIndirectCall(cg);
-        if(analyzeExistSmsCheat(cg)){
-        	return;
-        };
+        
+//        analyzeSootFieldInstance(cg); 
+//        analyzeIndirectCall(cg);
+
+        
+//        if(analyzeExistSmsCheat(cg)){
+//        	return;
+//        };
         
 //        AbstractSootFeature.SOOT_INITIALIZED=true;
 //        Set<AndroidMethod> toFindAsyncMethods = new HashSet<>();
@@ -553,8 +561,8 @@ public class MyInfoflow extends AbstractInfoflow {
 //		}
         
         
-        GenerateVisualGraph gvg = new GenerateVisualGraph();
-        gvg.init(cg,getmGraph());
+//        GenerateVisualGraph gvg = new GenerateVisualGraph();
+//        gvg.init(cg,getmGraph());
         
         PointsToAnalysis pta = Scene.v().getPointsToAnalysis();
         if(pta instanceof PAG) {
@@ -857,6 +865,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		logger.info("Source lookup done, found {} sources and {} sinks.", forwardProblem.getInitialSeeds().size(),
 				sinkCount);
 		
+		if(XX ){
 		forwardSolver.solve();
 		
 		// Not really nice, but sometimes Heros returns before all
@@ -926,6 +935,7 @@ public class MyInfoflow extends AbstractInfoflow {
 		
 		for (ResultsAvailableHandler handler : onResultsAvailable)
 			handler.onResultsAvailable(iCfg, results);
+		}
 	}
 	
 	/**
@@ -1167,11 +1177,12 @@ public class MyInfoflow extends AbstractInfoflow {
 		}
 		
 		for(String key:SIGNATURE_MAP.keySet()){
-			if(canFindSootClass(realClassHierarchy,key)){
+			SootClass realInvokeClass = canFindSootClass(realClassHierarchy,key);
+			if(realInvokeClass!=null){
 				for(String fromMethod:SIGNATURE_MAP.get(key).keySet()){
 					if(subSignature.equals(fromMethod)){
 						String toMethod = SIGNATURE_MAP.get(key).get(fromMethod);
-						tgt = invokeClass.getMethod(toMethod);
+						tgt = realInvokeClass.getMethod(toMethod);
 						System.err.println("find async call "+fromMethod);
 					}
 				}
@@ -1180,14 +1191,14 @@ public class MyInfoflow extends AbstractInfoflow {
 		return tgt;
 	}
 	
-	private boolean canFindSootClass(List<SootClass> realClassHierarchy,
+	private SootClass canFindSootClass(List<SootClass> realClassHierarchy,
 			String key) {
 		for(SootClass sc:realClassHierarchy){
 			if(sc.getName().equals(key)){
-				return true;
+				return sc;
 			}
 		}
-		return false;
+		return null;
 	}
 	
 	/**
@@ -1569,6 +1580,23 @@ public class MyInfoflow extends AbstractInfoflow {
 		}
 	}
 
+	
+	public List<Unit> getSrc() {
+		return src;
+	}
+
+	public void setSrc(List<Unit> src) {
+		this.src = src;
+	}
+
+	public List<Unit> getSnk() {
+		return snk;
+	}
+
+	public void setSnk(List<Unit> snk) {
+		this.snk = snk;
+	}
+
 	/**
 	 * Scans the given method for sources and sinks contained in it. Sinks are
 	 * just counted, sources are added to the InfoflowProblem as seeds.
@@ -1598,9 +1626,11 @@ public class MyInfoflow extends AbstractInfoflow {
 				Stmt s = (Stmt) u;
 				if (sourcesSinks.getSourceInfo(s, iCfg) != null) {
 					forwardProblem.addInitialSeeds(u, Collections.singleton(forwardProblem.zeroValue()));
+					src.add(u);
 					logger.debug("Source found: {}", u);
 				}
 				if (sourcesSinks.isSink(s, iCfg)) {
+					snk.add(u);
 		            logger.debug("Sink found: {}", u);
 					sinkCount++;
 				}
