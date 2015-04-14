@@ -616,21 +616,21 @@ public class IFDSSolver<N,D extends FastSolverLinkedNode<D>,M,I extends BiDiInte
 
 		public void run() {
 			if(icfg.isCallStmt(edge.getTarget())) {
-				System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//				System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				processCall(edge);
-				System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//				System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 			} else {
 				//note that some statements, such as "throw" may be
 				//both an exit statement and a "normal" statement
 				if(icfg.isExitStmt(edge.getTarget())) {
-					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 					processExit(edge);
-					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				}
 				if(!icfg.getSuccsOf(edge.getTarget()).isEmpty()) {
-					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//					System.out.println("begin: " + edge.getTarget() + "; " + icfg.getClass().getName());
 					processNormalFlow(edge);
-					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
+//					System.out.println("end: " + edge.getTarget() + "; " + icfg.getClass().getName());
 				}
 			}
 		}
