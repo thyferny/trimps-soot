@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -16,8 +17,10 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.xmlpull.v1.XmlPullParserException;
@@ -31,7 +34,7 @@ import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import com.mysql.jdbc.Driver;
 
 public class MyAnalyzer {
-	static boolean generate = true;
+	static boolean generate = false;
 
 	private static boolean stopAfterFirstFlow = false;
 	private static boolean implicitFlows = false;
@@ -56,6 +59,8 @@ public class MyAnalyzer {
 	static LinkedList<String> snkPoints = new LinkedList<String>();
 	static int[] srcCharacter;
 	static int[] snkCharacter;
+	static String lineSep ="\n";
+	static String resultFile = "E:/MyAnalyzer.result1";
 
 	static {
 		try {
@@ -95,6 +100,8 @@ public class MyAnalyzer {
 
 			srcCharacter = new int[srcPoints.size()];
 			snkCharacter = new int[snkPoints.size()];
+			
+			lineSep = System.getProperty("line.separator", "\n");
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
@@ -116,49 +123,88 @@ public class MyAnalyzer {
 		}
 	}
 
-	public static void kMeansDriver() throws SQLException {
+//	public static void kMeansDriver() throws SQLException {
+//		Statement st = mysqlConnection().createStatement();
+//		ResultSet rs = st.executeQuery("select * from apksrc");
+//		ArrayList<double[]> all = new ArrayList<>();
+//		while (rs.next()) {
+//			String val = rs.getString("val");
+//			String[] tmp = val.replaceAll("\\[", "").replaceAll("\\]", "").split(",");
+//			double[] vec = new double[tmp.length - 1];
+//			for (int i = 0; i < vec.length; i++) {
+//				vec[i] = Double.parseDouble(tmp[i]);
+//			}
+//			all.add(vec);
+//		}
+//		int len = all.get(0).length;
+//		// 划分为10个簇，质心移动小于1E-8时终止迭代，重复运行20次
+//		double kSA = Double.MAX_VALUE;
+//		int fail = 0;
+//		double estimateK = Math.sqrt(all.size()) * 2;
+//		int k;
+//		for (k = 1; k < estimateK; k++) {
+//			System.out.println("k=" + k);
+//			KMeansEngine km = new KMeansEngine(k, 1E-10, 8, len);
+//			int index = 0;
+//			double minsa = Double.MAX_VALUE;
+//			for (int i = 0; i < km.repeat; i++) {
+//				double ss = km.run(i, all, len);
+//				if (ss < minsa) {
+//					minsa = ss;
+//					index = i;
+//				}
+//			}
+//			System.out.println("最好的结果是第" + index + "次。" + "SS:" + minsa);
+//			System.out.println("-------------------------------------------------------");
+//			if (kSA < minsa) {//
+//				fail++;
+//			} else {
+//				kSA = minsa;
+//			}
+//			if (fail > 5) {
+//				break;
+//			}
+//		}
+//		System.out.println("该批数据最好聚未" + k + "类");
+//	}
+	
+	public static String minDistApkMacter(String apkFilePath) throws SQLException, IOException {
+		String minDistMd5 = "";
 		Statement st = mysqlConnection().createStatement();
-		ResultSet rs = st.executeQuery("select * from apksrc");
-		ArrayList<double[]> all = new ArrayList<>();
+		ResultSet rs = st.executeQuery("select * from kmeans");
+		Map<String,double[]> all = new HashMap<>();
+		List<Double> avg = new ArrayList<>();
 		while (rs.next()) {
-			String val = rs.getString("val");
+			String val = rs.getString("center");
 			String[] tmp = val.replaceAll("\\[", "").replaceAll("\\]", "").split(",");
 			double[] vec = new double[tmp.length - 1];
 			for (int i = 0; i < vec.length; i++) {
 				vec[i] = Double.parseDouble(tmp[i]);
 			}
-			all.add(vec);
+			all.put(rs.getString("uuid"),vec);
+			avg.add(rs.getDouble("avg"));
 		}
-		int len = all.get(0).length;
-		// 划分为10个簇，质心移动小于1E-8时终止迭代，重复运行20次
-		double kSA = Double.MAX_VALUE;
-		int fail = 0;
-		double estimateK = Math.sqrt(all.size()) * 2;
-		int k;
-		for (k = 1; k < estimateK; k++) {
-			System.out.println("k=" + k);
-			KMeansEngine km = new KMeansEngine(k, 1E-10, 8, len);
-			int index = 0;
-			double minsa = Double.MAX_VALUE;
-			for (int i = 0; i < km.repeat; i++) {
-				double ss = km.run(i, all, len);
-				if (ss < minsa) {
-					minsa = ss;
-					index = i;
-				}
-			}
-			System.out.println("最好的结果是第" + index + "次。" + "SS:" + minsa);
-			System.out.println("-------------------------------------------------------");
-			if (kSA < minsa) {//
-				fail++;
-			} else {
-				kSA = minsa;
-			}
-			if (fail > 5) {
-				break;
+		double minDst = Double.MAX_VALUE;
+		for(String uuid:all.keySet()){
+			double[] vec = all.get(uuid);
+			if(minDst>MyUtil.calEditDist(srcCharacter, vec, vec.length)){
+				minDst = MyUtil.calEditDist(srcCharacter, vec, vec.length);
+				minDistMd5 = uuid;
 			}
 		}
-		System.out.println("该批数据最好聚未" + k + "类");
+//		rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig31=\'"+minDistMd5+"\')");
+		FileWriter fw = new FileWriter(resultFile, true);
+		fw.write("分析文件:"+apkFilePath+lineSep);
+		fw.write("最近值:"+minDst+lineSep);
+		fw.write("所属中心UUID:"+minDistMd5+lineSep);
+//		while (rs.next()) {
+//			String val = rs.getString("name");
+//			fw.write("最近APK:"+val+lineSep);
+//		}
+		fw.write("----------------------------------------------------------------------------------------"+lineSep);
+		fw.flush();
+		fw.close();
+		return minDistMd5;
 	}
 
 	static void updateDataBase() throws SQLException {
@@ -172,7 +218,7 @@ public class MyAnalyzer {
 		st.execute("create table apkname(uuid text,name text)");
 	}
 
-	private static void singalApkGeneralMatcher(String apkFilePath) throws SQLException {
+	private static void singalApkGeneralMatcher(String apkFilePath) throws SQLException, IOException {
 		String signInfo = MyUtil.getApkSignInfo(apkFilePath);
 		String character1_1 = "";
 		if ("".equals(signInfo)) {
@@ -215,42 +261,41 @@ public class MyAnalyzer {
 		}
 
 		// 特征3提取完成
+		FileWriter fw = new FileWriter(resultFile, true);
 		Connection conn = mysqlConnection();
 		if (conn != null) {
 			Statement st = conn.createStatement();
-			ResultSet rs = st.executeQuery("select * from signature where sig11=\'" + character1_1 + "\'");
+			ResultSet rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig11=\'" + character1_1 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " has cert same with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " has cert same with " + rs.getString("name")+lineSep);
 			}
-			rs = st.executeQuery("select * from signature where sig12=\'" + character1_2 + "\'");
+			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig12=\'" + character1_2 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " same with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " same with " + rs.getString("name")+lineSep);
 			}
-			rs = st.executeQuery("select * from signature where sig21=\'" + character2_1 + "\'");
+			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig21=\'" + character2_1 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " same activity structure with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " same activity structure with " + rs.getString("name")+lineSep);
 			}
-			rs = st.executeQuery("select * from signature where sig22=\'" + character2_2 + "\'");
+			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig22=\'" + character2_2 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
 			}
-			rs = st.executeQuery("select * from signature where sig31=\'" + character3_1 + "\'");
+			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig31=\'" + character3_1 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
 			}
-			rs = st.executeQuery("select * from signature where sig32=\'" + character3_2 + "\'");
+			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig32=\'" + character3_2 + "\')");
 			while (rs.next()) {
-				System.out.println("find " + apkFilePath + " same permission with " + rs.getString("uuid"));
-				break;
+				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
 			}
 			st.close();
 		}
-		System.out.println("----------------------------------------------");
+		fw.write("**************************************************************************"+lineSep);
+		fw.flush();
+		fw.close();
+		minDistApkMacter(apkFilePath);
+		
 	}
 
 	private static void singalApkRunner(String apkFilePath) throws SQLException {

@@ -141,7 +141,7 @@ public class MyInfoflow extends AbstractInfoflow {
 	private List<Unit> src = new ArrayList<>();
 	private List<Unit> snk = new ArrayList<>();
 
-	private static boolean XX = true;
+	private static boolean XX = false;
 	
 	private static Map<String, Map<String,String>> SIGNATURE_MAP = new HashMap<String, Map<String,String>>();
 	static{
