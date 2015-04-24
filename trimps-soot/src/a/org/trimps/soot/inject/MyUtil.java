@@ -1,10 +1,13 @@
 package a.org.trimps.soot.inject;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
@@ -67,7 +70,7 @@ public class MyUtil {
 			PKCS7 pkcs7 = new PKCS7(is);
 			return pkcs7.getCertificates();
 		} catch (Exception e) {
-//			 e.printStackTrace();
+			// e.printStackTrace();
 			// System.err.println("Exception reading " + je.getName() + " in "
 			// + jarFile.getName() + ": " + e);
 		}
@@ -76,15 +79,15 @@ public class MyUtil {
 
 	public static String getPublicKey(String rsa) {
 		try {
-			
+
 			File rsaFile = new File(rsa);
 			InputStream is = new FileInputStream(rsaFile);
-					CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
-					X509Certificate cert = (X509Certificate) certFactory.generateCertificate(is);
-					String publickey = cert.getPublicKey().toString();
-					publickey = publickey.substring(publickey.indexOf("modulus: ") + 9, publickey.indexOf("\n", publickey.indexOf("modulus:")));
-					System.out.println(publickey);
-					return publickey;
+			CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+			X509Certificate cert = (X509Certificate) certFactory.generateCertificate(is);
+			String publickey = cert.getPublicKey().toString();
+			publickey = publickey.substring(publickey.indexOf("modulus: ") + 9, publickey.indexOf("\n", publickey.indexOf("modulus:")));
+			System.out.println(publickey);
+			return publickey;
 		} catch (CertificateException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
@@ -212,10 +215,19 @@ public class MyUtil {
 		return result.toString();
 	}
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws IOException {
 		// System.out.println(toHexString(new
 		// boolean[]{true,false,true,true,true,false,false,true}));
-		System.out.println(getPublicKey("F:/home/analyzed/META-INF/IF_KEY.RSA"));
+//		System.out.println(getPublicKey("F:/home/analyzed/META-INF/IF_KEY.RSA"));
+		FileInputStream is = new FileInputStream("C:/Users/thyferny/Downloads/Reduced/C000008/10.txt");
+		BufferedReader br = new BufferedReader(new InputStreamReader(is,"UTF-8"));
+		StringBuffer sb = new StringBuffer();
+		String line = null;
+		while((line=br.readLine())!=null){
+			sb.append(line);
+		}
+		String fileContent = sb.toString();
+		System.out.println(tryToUTF8(fileContent));
 	}
 
 	public static String toHexString(boolean[] array) {
@@ -359,6 +371,38 @@ public class MyUtil {
 			dist += ((vector[i] - center[i]) * (vector[i] - center[i]));
 		}
 		return Math.sqrt(dist);
+	}
+
+	public static String tryToUTF8(String str) {
+		String encode = "GB2312";
+		try {
+			if (str.equals(new String(str.getBytes(encode), encode))) {
+				return new String(str.getBytes(encode), "UTF8");
+			}
+		} catch (Exception exception) {
+		}
+		encode = "ISO-8859-1";
+		try {
+			if (str.equals(new String(str.getBytes(encode), encode))) {
+				return new String(str.getBytes(encode), "UTF8");
+			}
+		} catch (Exception exception1) {
+		}
+		encode = "UTF-8";
+		try {
+			if (str.equals(new String(str.getBytes(encode), encode))) {
+				return new String(str.getBytes(encode), "UTF8");
+			}
+		} catch (Exception exception2) {
+		}
+		encode = "GBK";
+		try {
+			if (str.equals(new String(str.getBytes(encode), encode))) {
+				return new String(str.getBytes(encode), "UTF8");
+			}
+		} catch (Exception exception3) {
+		}
+		return "";
 	}
 
 	public static Node reverse(Node head) {

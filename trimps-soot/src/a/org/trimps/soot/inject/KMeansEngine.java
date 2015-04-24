@@ -137,17 +137,20 @@ public class KMeansEngine {
     }
     
     public double[] getAvg(Map<String, double[]> all, int len) {
-        double[] avg = new double[k];
+        double[] avg = new double[k*2];
         int[] count = new int[k];
         double[] ss = new double[k];
         for(String key:all.keySet()){
             int id = cidMap.get(key);
             count[id]++;
             for (int i = 0; i < len; i++)
-                ss[id] += Math.pow(all.get(key)[i] - center[id][i], 2.0);
+                ss[id] += ((all.get(key)[i] - center[id][i])*(all.get(key)[i] - center[id][i]));
         }
         for (int i = 0; i < k; i++) {
         	avg[i]= ss[i]/count[i];
+        }
+        for (int i = k; i < 2*k; i++) {
+        	avg[i]= count[i-k];
         }
         return avg;
     }
@@ -236,13 +239,14 @@ public class KMeansEngine {
 //			}
 //		}
 		System.out.println("该批数据最好聚未" + k + "类");
-		st.execute("drop table if exists kmeans");
-		st.execute("create table kmeans(uuid text,center text,avg double)");
+		st.execute("drop table if exists srckmeans");
+		st.execute("create table srckmeans(uuid text,center text,avg double,cnt double)");
 		for(int i=0;i<k;i++){
-			PreparedStatement ps1 = conn.prepareStatement("insert into kmeans values(?,?,?)");
+			PreparedStatement ps1 = conn.prepareStatement("insert into srckmeans values(?,?,?,?)");
 			ps1.setString(1, UUID.randomUUID().toString());
 			ps1.setString(2, Arrays.toString(fcenter[i]));
 			ps1.setDouble(3, avg[i]);
+			ps1.setDouble(4, avg[i+k]);
 			ps1.execute();
 		}
     }

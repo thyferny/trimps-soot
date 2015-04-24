@@ -34,7 +34,7 @@ import soot.jimple.infoflow.taintWrappers.ITaintPropagationWrapper;
 import com.mysql.jdbc.Driver;
 
 public class MyAnalyzer {
-	static boolean generate = false;
+	static boolean generate = true;
 
 	private static boolean stopAfterFirstFlow = false;
 	private static boolean implicitFlows = false;
@@ -60,7 +60,7 @@ public class MyAnalyzer {
 	static int[] srcCharacter;
 	static int[] snkCharacter;
 	static String lineSep ="\n";
-	static String resultFile = "E:/MyAnalyzer.result1";
+	static String resultFile = "E:/MyAnalyzer.result4";
 
 	static {
 		try {
@@ -169,11 +169,11 @@ public class MyAnalyzer {
 //	}
 	
 	public static String minDistApkMacter(String apkFilePath) throws SQLException, IOException {
-		String minDistMd5 = "";
+		
 		Statement st = mysqlConnection().createStatement();
-		ResultSet rs = st.executeQuery("select * from kmeans");
-		Map<String,double[]> all = new HashMap<>();
-		List<Double> avg = new ArrayList<>();
+		ResultSet rs = st.executeQuery("select * from srckmeans");
+		Map<String,double[]> srcAll = new HashMap<>();
+		Map<String,Double> srcAvg = new HashMap<>();
 		while (rs.next()) {
 			String val = rs.getString("center");
 			String[] tmp = val.replaceAll("\\[", "").replaceAll("\\]", "").split(",");
@@ -181,30 +181,54 @@ public class MyAnalyzer {
 			for (int i = 0; i < vec.length; i++) {
 				vec[i] = Double.parseDouble(tmp[i]);
 			}
-			all.put(rs.getString("uuid"),vec);
-			avg.add(rs.getDouble("avg"));
+			srcAll.put(rs.getString("uuid"),vec);
+			srcAvg.put(rs.getString("uuid"),rs.getDouble("avg"));
 		}
-		double minDst = Double.MAX_VALUE;
-		for(String uuid:all.keySet()){
-			double[] vec = all.get(uuid);
-			if(minDst>MyUtil.calEditDist(srcCharacter, vec, vec.length)){
-				minDst = MyUtil.calEditDist(srcCharacter, vec, vec.length);
-				minDistMd5 = uuid;
+		double minSrcDst = Double.MAX_VALUE;
+		String minSrcDstUUID = "";
+		for(String uuid:srcAll.keySet()){
+			double[] vec = srcAll.get(uuid);
+			if(minSrcDst>MyUtil.calEditDist(srcCharacter, vec, vec.length)){
+				minSrcDst = MyUtil.calEditDist(srcCharacter, vec, vec.length);
+				minSrcDstUUID = uuid;
 			}
 		}
-//		rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig31=\'"+minDistMd5+"\')");
+		
+		rs = st.executeQuery("select * from snkkmeans");
+		Map<String,double[]> snkAll = new HashMap<>();
+		Map<String,Double> snkAvg = new HashMap<>();
+		while (rs.next()) {
+			String val = rs.getString("center");
+			String[] tmp = val.replaceAll("\\[", "").replaceAll("\\]", "").split(",");
+			double[] vec = new double[tmp.length - 1];
+			for (int i = 0; i < vec.length; i++) {
+				vec[i] = Double.parseDouble(tmp[i]);
+			}
+			snkAll.put(rs.getString("uuid"),vec);
+			snkAvg.put(rs.getString("uuid"),rs.getDouble("avg"));
+		}
+		double minSnkDst = Double.MAX_VALUE;
+		String minSnkDstUUID = "";
+		for(String uuid:snkAll.keySet()){
+			double[] vec = snkAll.get(uuid);
+			if(minSnkDst>MyUtil.calEditDist(snkCharacter, vec, vec.length)){
+				minSnkDst = MyUtil.calEditDist(snkCharacter, vec, vec.length);
+				minSnkDstUUID = uuid;
+			}
+		}
+		
 		FileWriter fw = new FileWriter(resultFile, true);
 		fw.write("分析文件:"+apkFilePath+lineSep);
-		fw.write("最近值:"+minDst+lineSep);
-		fw.write("所属中心UUID:"+minDistMd5+lineSep);
-//		while (rs.next()) {
-//			String val = rs.getString("name");
-//			fw.write("最近APK:"+val+lineSep);
-//		}
+		fw.write("SRC最近值:"+minSrcDst+lineSep);
+		fw.write("所属中心UUID:"+minSrcDstUUID+lineSep);
+		fw.write("所属中心平均距离:"+srcAvg.get(minSrcDstUUID)+lineSep);
+		fw.write("SNK最近值:"+minSnkDst+lineSep);
+		fw.write("所属中心UUID:"+minSnkDstUUID+lineSep);
+		fw.write("所属中心平均距离:"+snkAvg.get(minSnkDstUUID)+lineSep);
 		fw.write("----------------------------------------------------------------------------------------"+lineSep);
 		fw.flush();
 		fw.close();
-		return minDistMd5;
+		return minSrcDstUUID;
 	}
 
 	static void updateDataBase() throws SQLException {
@@ -251,6 +275,8 @@ public class MyAnalyzer {
 		String character3_1;
 		String character3_2;
 		try {
+			Arrays.fill(srcCharacter, 0);
+			Arrays.fill(snkCharacter, 0);
 			runAnalysis(apkFilePath, SDKs);
 			character3_1 = MyUtil.md5(Arrays.toString(srcCharacter));
 			character3_2 = MyUtil.md5(Arrays.toString(snkCharacter));
@@ -264,36 +290,36 @@ public class MyAnalyzer {
 		FileWriter fw = new FileWriter(resultFile, true);
 		Connection conn = mysqlConnection();
 		if (conn != null) {
-			Statement st = conn.createStatement();
-			ResultSet rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig11=\'" + character1_1 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " has cert same with " + rs.getString("name")+lineSep);
-			}
-			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig12=\'" + character1_2 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " same with " + rs.getString("name")+lineSep);
-			}
-			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig21=\'" + character2_1 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " same activity structure with " + rs.getString("name")+lineSep);
-			}
-			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig22=\'" + character2_2 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
-			}
-			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig31=\'" + character3_1 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
-			}
-			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig32=\'" + character3_2 + "\')");
-			while (rs.next()) {
-				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
-			}
-			st.close();
+//			Statement st = conn.createStatement();
+//			ResultSet rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig11=\'" + character1_1 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " has cert same with " + rs.getString("name")+lineSep);
+//			}
+//			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig12=\'" + character1_2 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " same with " + rs.getString("name")+lineSep);
+//			}
+//			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig21=\'" + character2_1 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " same activity structure with " + rs.getString("name")+lineSep);
+//			}
+//			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig22=\'" + character2_2 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
+//			}
+//			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig31=\'" + character3_1 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
+//			}
+//			rs = st.executeQuery("select name from apkname where uuid in (select uuid from signature where sig32=\'" + character3_2 + "\')");
+//			while (rs.next()) {
+//				fw.write("find " + apkFilePath + " same permission with " + rs.getString("name")+lineSep);
+//			}
+//			st.close();
 		}
-		fw.write("**************************************************************************"+lineSep);
-		fw.flush();
-		fw.close();
+//		fw.write("**************************************************************************"+lineSep);
+//		fw.flush();
+//		fw.close();
 		minDistApkMacter(apkFilePath);
 		
 	}
